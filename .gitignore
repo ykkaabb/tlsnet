@@ -6,6 +6,7 @@
 *.apk
 *.aab
 *.aar
+clients/android/app/libs/
 
 # Go
 *.test

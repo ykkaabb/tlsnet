@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">TlsNet</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="configuration">TlsNet TOML configuration</string>
+</resources>

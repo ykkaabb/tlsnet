@@ -1,0 +1,2 @@
+-keep class mobilecore.** { *; }
+-keep class go.** { *; }

@@ -1,16 +1,34 @@
 # Android client
 
-Planned first-release client:
+The Android client uses `VpnService` for a no-root split tunnel and a gomobile
+AAR for the same QUIC/HTTP3 and multipath TLS core used by desktop clients.
+Android 8.0 (API 26) or newer is required.
 
-- minimum Android 8.0 (API 26);
-- Kotlin application and foreground `VpnService`;
-- Go packet/transport core packaged as an AAR;
-- user-approved split tunnel for the overlay and home LAN routes;
-- two TLS lanes on cellular and four lanes on Wi-Fi;
-- reconnect after Wi-Fi/cellular handover;
-- no Root and no third-party account dependency;
-- locally signed, sideloadable APK.
+## Build
 
-This directory intentionally contains no generated Android Studio files yet. The
-control-plane message schema and reusable Go core will be separated from the Linux
-prototype before the Gradle project is generated.
+Install Go 1.26+, JDK 17, Android SDK 35, an Android NDK, and Gradle 8.11+.
+Set `ANDROID_HOME` or `ANDROID_SDK_ROOT`, then run:
+
+```bash
+./scripts/build-android.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\build-android.ps1
+```
+
+The scripts first generate `app/libs/tlsnet.aar` with the repository-pinned
+`gomobile` tool, then build `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Use
+
+1. Install the APK and open TlsNet.
+2. Edit the TOML configuration. Use a unique Android node name.
+3. Tap **Connect** and approve the Android VPN prompt.
+4. Keep the persistent notification enabled; its action disconnects the tunnel.
+
+The first Android release intentionally rejects `0.0.0.0/0`. Only the overlay
+and home LAN prefixes are installed, so TlsNet's public TCP/UDP sockets cannot
+be routed recursively into their own VPN.
