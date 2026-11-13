@@ -52,15 +52,16 @@ on the gateway so the home router does not need a return route.
 
 ### Desktop client
 
-Linux uses `/dev/net/tun`. Windows will use Wintun. Both clients receive their overlay
-address and split routes from the relay before enabling their TUN adapter.
+Linux uses `/dev/net/tun`. Windows uses the official signed Wintun driver. Both clients
+receive their overlay address from the relay and install only the split routes allowed
+by their local configuration.
 
 ### Android client
 
 The Android app uses Kotlin for lifecycle/UI and Android `VpnService` for the virtual
 interface. The transport and packet core remains Go and is packaged as an AAR. The
-app protects public transport sockets from VPN recursion and installs only the routes
-pushed by the relay. Android is an access client in the first release and does not
+app installs only split routes, keeping public transport sockets outside the VPN.
+Android is an access client and does not
 advertise its local Wi-Fi network.
 
 Only one Android VPN service can be active per user profile. TlsNet therefore cannot
@@ -70,8 +71,7 @@ run at the same time as another app using Android VPN/TUN mode.
 
 1. The client establishes a protected TLS control connection.
 2. Client and relay authenticate a transcript bound to the TLS certificate.
-3. The relay returns the assigned overlay address, MTU, permitted routes, session ID,
-   and data-lane policy.
+3. The relay returns the assigned overlay address, MTU, and session ID.
 4. The client creates/configures its TUN interface.
 5. Two to four TLS data lanes join the authenticated session.
 6. Data frames carry sequence numbers so the receiver can perform bounded reordering.
