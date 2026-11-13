@@ -94,7 +94,7 @@ before calling `VpnService.Builder.establish()`.
 - Android cellular links default to two lanes to limit radio wakeups and battery use.
 - Packet scheduling uses lane health and pending bytes rather than round-robin only.
 - Reordering has a strict time and frame bound; a failed lane cannot block the session.
-- MTU starts conservatively and will be configurable per node.
+- MTU defaults conservatively and is configurable per node.
 
 ## Migration
 
