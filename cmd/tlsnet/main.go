@@ -67,6 +67,7 @@ func configure(arguments []string) error {
 	flags := flag.NewFlagSet("configure", flag.ContinueOnError)
 	path := flags.String("o", "config.toml", "output configuration file")
 	force := flags.Bool("force", false, "replace an existing configuration")
+	role := flags.String("role", "", "preselect relay, gateway, or client")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -80,7 +81,7 @@ func configure(arguments []string) error {
 		passwordReader = nil
 	}
 	result, err := enroll.RunWizard(enroll.WizardOptions{
-		Input: os.Stdin, Output: os.Stderr, ReadPassword: passwordReader, Hostname: enroll.SystemHostname(),
+		Input: os.Stdin, Output: os.Stderr, ReadPassword: passwordReader, Hostname: enroll.SystemHostname(), Role: *role,
 	})
 	if err != nil {
 		return err

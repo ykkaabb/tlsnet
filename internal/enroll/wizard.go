@@ -19,6 +19,7 @@ type WizardOptions struct {
 	Output       io.Writer
 	ReadPassword func(prompt string) (string, error)
 	Hostname     string
+	Role         string
 }
 
 type WizardResult struct {
@@ -35,11 +36,15 @@ func RunWizard(options WizardOptions) (*WizardResult, error) {
 	if hostname == "" {
 		hostname = "client"
 	}
-	role, err := prompt(reader, options.Output, "Role (relay/gateway/client)", "client")
-	if err != nil {
-		return nil, err
+	role := strings.ToLower(strings.TrimSpace(options.Role))
+	if role == "" {
+		var err error
+		role, err = prompt(reader, options.Output, "Role (relay/gateway/client)", "client")
+		if err != nil {
+			return nil, err
+		}
+		role = strings.ToLower(role)
 	}
-	role = strings.ToLower(role)
 	if role != "relay" && role != "gateway" && role != "client" {
 		return nil, errors.New("role must be relay, gateway, or client")
 	}

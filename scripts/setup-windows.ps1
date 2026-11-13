@@ -28,7 +28,7 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ("tlsnet-setup-" + [guid]::New
 $temporaryConfig = Join-Path $temporary "config.toml"
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
-    & $binaryPath configure -o $temporaryConfig
+    & $binaryPath configure -role client -o $temporaryConfig
     if ($LASTEXITCODE -ne 0) { throw "Configuration wizard failed." }
     & $installer -Binary $binaryPath -Wintun $wintunPath -Config $temporaryConfig
     if ($LASTEXITCODE -ne 0) { throw "Installation failed." }

@@ -5,7 +5,12 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/.." && pwd)
-binary=${1:-$root/tlsnet}
+role=${1:-}
+if [[ -n "$role" && "$role" != "relay" && "$role" != "gateway" && "$role" != "client" ]]; then
+  echo "usage: sudo $0 [relay|gateway|client] [tlsnet-binary]" >&2
+  exit 2
+fi
+binary=${2:-$root/tlsnet}
 installer="$script_dir/install-linux.sh"
 
 [[ -x "$binary" ]] || { echo "TlsNet binary is missing or not executable: $binary" >&2; exit 1; }
@@ -28,7 +33,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$binary" configure -o "$temporary/config.toml"
+configure_args=(configure -o "$temporary/config.toml")
+if [[ -n "$role" ]]; then
+  configure_args+=(-role "$role")
+fi
+"$binary" "${configure_args[@]}"
 "$installer" "$binary" "$temporary/config.toml"
 
 echo

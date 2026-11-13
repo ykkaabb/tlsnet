@@ -54,22 +54,22 @@ CGO_ENABLED=0 go build -trimpath -o tlsnet ./cmd/tlsnet
 推荐在云服务器解压发布包后直接运行：
 
 ```bash
-sudo ./scripts/setup-linux.sh
+sudo ./scripts/setup-linux.sh relay
 ```
 
-选择 `relay`。向导会询问公网地址、端口、家庭子网和密码，然后自动生成配置、
+向导会询问公网地址、端口、家庭子网和密码，然后自动生成配置、
 校验、安装并启动。结束时会打印以 `TLSNET1:` 开头的 join code；它包含服务器、
 网段和 SNI，但**不包含密码**。
 
-家中 Linux/fnOS 运行同一命令，选择 `gateway`，粘贴 join code、确认自动识别的
-LAN 网卡并输入相同密码。Linux 访问端选择 `client`。Windows 在管理员
-PowerShell 中运行：
+家中 Linux/fnOS 运行 `sudo ./scripts/setup-linux.sh gateway`，粘贴 join code、
+确认自动识别的 LAN 网卡并输入相同密码。Linux 访问端运行
+`sudo ./scripts/setup-linux.sh client`。Windows 在管理员 PowerShell 中运行：
 
 ```powershell
 .\scripts\setup-windows.ps1
 ```
 
-同样选择 `client`、粘贴 join code 并输入密码。Android 点击
+粘贴 join code 并输入密码。Android 点击
 **Import join code**，只填写 join code、节点名和密码。整个流程不需要手写 TOML。
 云防火墙仍需同时放行向导所选端口的 TCP 和 UDP。
 
