@@ -37,7 +37,8 @@ configure_args=(configure -o "$temporary/config.toml")
 if [[ -n "$role" ]]; then
   configure_args+=(-role "$role")
 fi
-"$binary" "${configure_args[@]}"
+configuration_output=$("$binary" "${configure_args[@]}")
+printf '%s\n' "$configuration_output"
 "$installer" "$binary" "$temporary/config.toml"
 
 echo
@@ -45,3 +46,7 @@ echo "Setup complete. Useful commands:"
 echo "  systemctl status tlsnet --no-pager -l"
 echo "  journalctl -u tlsnet -f"
 echo "  ip address show tlsnet0"
+if [[ "$role" == "relay" ]]; then
+  echo
+  printf '%s\n' "$configuration_output"
+fi
