@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +41,9 @@ func ensureLocalToken() (string, string, error) {
 	}
 	path := filepath.Join(directory, "control.token")
 	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) == 64 {
+		if _, err := ensureControlPort(directory); err != nil {
+			return "", "", err
+		}
 		return strings.TrimSpace(string(data)), path, nil
 	}
 	value := make([]byte, 32)
@@ -49,7 +54,29 @@ func ensureLocalToken() (string, string, error) {
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		return "", "", err
 	}
+	if _, err := ensureControlPort(directory); err != nil {
+		return "", "", err
+	}
 	return token, path, nil
+}
+
+func ensureControlPort(directory string) (int, error) {
+	path := filepath.Join(directory, "control.port")
+	if data, err := os.ReadFile(path); err == nil {
+		if port, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && port >= 1024 && port <= 65535 {
+			return port, nil
+		}
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("choose control port: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	if err := os.WriteFile(path, []byte(strconv.Itoa(port)), 0o600); err != nil {
+		return 0, err
+	}
+	return port, nil
 }
 
 func readLocalToken() (string, error) {
@@ -87,6 +114,14 @@ func installService(configPath, tokenPath string) error {
 	}
 	if len(strings.TrimSpace(string(tokenBytes))) != 64 {
 		return errors.New("invalid control token")
+	}
+	portBytes, err := os.ReadFile(filepath.Join(filepath.Dir(tokenPath), "control.port"))
+	if err != nil {
+		return fmt.Errorf("read control port: %w", err)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(portBytes)))
+	if err != nil || port < 1024 || port > 65535 {
+		return errors.New("invalid control port")
 	}
 
 	executable, err := os.Executable()
@@ -152,6 +187,9 @@ func installService(configPath, tokenPath string) error {
 	if err := replaceFile(filepath.Join(dataDirectory, "control.token"), []byte(strings.TrimSpace(string(tokenBytes))), 0o600); err != nil {
 		return err
 	}
+	if err := replaceFile(filepath.Join(dataDirectory, "control.port"), []byte(strconv.Itoa(port)), 0o600); err != nil {
+		return err
+	}
 	aclOutput, aclErr := exec.Command(
 		"icacls.exe", dataDirectory, "/inheritance:r", "/grant:r",
 		"*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/C",
@@ -174,6 +212,17 @@ func installService(configPath, tokenPath string) error {
 	defer service.Close()
 	if err := service.Start(); err != nil {
 		return fmt.Errorf("start service: %w", err)
+	}
+	var healthErr error
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, healthErr = controlRequest("GET", "/status", nil); healthErr == nil {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if healthErr != nil {
+		return fmt.Errorf("service started but health check failed: %w", healthErr)
 	}
 	_ = os.Remove(configPath)
 	return nil
@@ -207,7 +256,12 @@ func controlRequest(method, endpoint string, body io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequest(method, "http://"+controlAddr+endpoint, body)
+	localDirectory, err := localDataDirectory()
+	if err != nil {
+		return nil, err
+	}
+	controlAddress := controlAddressFromDirectory(localDirectory)
+	request, err := http.NewRequest(method, "http://"+controlAddress+endpoint, body)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +280,16 @@ func controlRequest(method, endpoint string, body io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("service returned %s: %s", response.Status, strings.TrimSpace(string(data)))
 	}
 	return data, nil
+}
+
+func controlAddressFromDirectory(directory string) string {
+	port := fallbackControlPort
+	if data, err := os.ReadFile(filepath.Join(directory, "control.port")); err == nil {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && parsed >= 1024 && parsed <= 65535 {
+			port = parsed
+		}
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 }
 
 func launchElevated(configPath, tokenPath string) error {

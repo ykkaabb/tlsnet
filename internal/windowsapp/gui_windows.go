@@ -72,7 +72,10 @@ const (
 	wmSetFont         = 0x0030
 	messageInfo       = 0x00000040
 	messageError      = 0x00000010
+	messageWarning    = 0x00000030
+	messageYesNo      = 0x00000004
 	messageSetForeground = 0x00010000
+	dialogYes         = 6
 
 	idJoin    = 100
 	idPassword = 101
@@ -172,7 +175,7 @@ func windowProcedure(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 		case idLogs:
 			contents, err := controlRequest("GET", "/logs", nil)
 			if err != nil {
-				messageBox("TlsNet", err.Error(), messageError)
+				messageBox("TlsNet", "后台服务尚未就绪，暂时无法读取日志。\n\n"+err.Error(), messageError)
 			} else if err := openTextInNotepad(contents); err != nil {
 				messageBox("TlsNet", err.Error(), messageError)
 			}
@@ -260,6 +263,12 @@ func connectFromForm() {
 		messageBox("TlsNet", err.Error(), messageError)
 		return
 	}
+	if !confirmBox(
+		"安装 TlsNet 后台服务",
+		"首次连接需要安装 Wintun 虚拟网卡和以 LocalSystem 运行的 TlsNet 后台服务。\n\n是否继续？",
+	) {
+		return
+	}
 	if err := launchElevated(pending, tokenPath); err != nil {
 		messageBox("TlsNet", err.Error(), messageError)
 		return
@@ -302,6 +311,18 @@ func utf16(value string) *uint16 {
 }
 
 func unsafePointer(value *uint16) unsafe.Pointer { return unsafe.Pointer(value) }
+
+func confirmBox(title, text string) bool {
+	titlePointer := utf16(title)
+	textPointer := utf16(text)
+	result, _, _ := procMessageBoxW.Call(
+		mainWindow,
+		uintptr(unsafe.Pointer(textPointer)),
+		uintptr(unsafe.Pointer(titlePointer)),
+		messageYesNo|messageWarning|messageSetForeground,
+	)
+	return result == dialogYes
+}
 
 func hostname() string {
 	value, err := os.Hostname()

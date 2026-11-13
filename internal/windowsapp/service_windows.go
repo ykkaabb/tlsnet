@@ -24,7 +24,7 @@ import (
 
 const (
 	serviceName = "TlsNet"
-	controlAddr = "127.0.0.1:49731"
+	fallbackControlPort = 24831
 )
 
 type serviceHandler struct{}
@@ -56,21 +56,25 @@ func (serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, cha
 	if err != nil {
 		return true, 1
 	}
-	controller := &tunnelController{logPath: filepath.Join(data, "tlsnet.log")}
-	if _, err := os.Stat(filepath.Join(data, "config.toml")); err == nil {
-		_ = controller.start()
-	}
-
 	tokenBytes, _ := os.ReadFile(filepath.Join(data, "control.token"))
+	controlAddress := controlAddressFromDirectory(data)
+	controller := &tunnelController{logPath: filepath.Join(data, "tlsnet.log")}
 	api := &http.Server{
-		Addr:              controlAddr,
+		Addr:              controlAddress,
 		Handler:           controlHandler(controller, string(tokenBytes), data),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
-	listener, listenErr := net.Listen("tcp", controlAddr)
-	if listenErr == nil {
-		go func() { _ = api.Serve(listener) }()
+	listener, listenErr := net.Listen("tcp", controlAddress)
+	if listenErr != nil {
+		return true, 2
+	}
+	go func() { _ = api.Serve(listener) }()
+	if _, err := os.Stat(filepath.Join(data, "config.toml")); err == nil {
+		if err := controller.start(); err != nil {
+			_ = listener.Close()
+			return true, 3
+		}
 	}
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
