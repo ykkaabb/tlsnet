@@ -24,7 +24,8 @@ New-Item -ItemType Directory -Force -Path $programDirectory, $dataDirectory | Ou
 Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $programDirectory "tlsnet.exe") -Force
 Copy-Item -LiteralPath $wintunPath -Destination (Join-Path $programDirectory "wintun.dll") -Force
 Copy-Item -LiteralPath $configPath -Destination (Join-Path $dataDirectory "config.toml") -Force
-& icacls.exe $dataDirectory /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+& icacls.exe $dataDirectory /inheritance:r /grant:r `
+    "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 
 $installedBinary = Join-Path $programDirectory "tlsnet.exe"
 $installedConfig = Join-Path $dataDirectory "config.toml"
@@ -33,7 +34,7 @@ $command = "& '$installedBinary' run -c '$installedConfig' *>> '$logPath'"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "{0}"' -f $command)
 $trigger = New-ScheduledTaskTrigger -AtStartup
-$taskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$taskPrincipal = New-ScheduledTaskPrincipal -UserId "S-1-5-18" -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "TlsNet" -Action $action -Trigger $trigger `
