@@ -153,6 +153,9 @@ func installService(configPath, tokenPath string) error {
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return err
 	}
+	if err := protectServicePath(dataDirectory, true); err != nil {
+		return fmt.Errorf("protect service data directory: %w", err)
+	}
 
 	manager, err := mgr.Connect()
 	if err != nil {
@@ -197,12 +200,16 @@ func installService(configPath, tokenPath string) error {
 	if err := replaceFile(filepath.Join(dataDirectory, "control.port"), []byte(strconv.Itoa(port)), 0o600); err != nil {
 		return err
 	}
-	aclOutput, aclErr := exec.Command(
-		"icacls.exe", dataDirectory, "/inheritance:r", "/grant:r",
-		"*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/C",
-	).CombinedOutput()
-	if aclErr != nil {
-		return fmt.Errorf("protect service data: %w: %s", aclErr, strings.TrimSpace(string(aclOutput)))
+	for _, name := range []string{"config.toml", "control.token", "control.port"} {
+		if err := protectServicePath(filepath.Join(dataDirectory, name), false); err != nil {
+			return fmt.Errorf("protect service data file %s: %w", name, err)
+		}
+	}
+	logPath := filepath.Join(dataDirectory, "tlsnet.log")
+	if _, err := os.Stat(logPath); err == nil {
+		if err := protectServicePath(logPath, false); err != nil {
+			return fmt.Errorf("protect service log: %w", err)
+		}
 	}
 
 	service, openErr := manager.OpenService(serviceName)
@@ -391,6 +398,33 @@ func copyFile(source, destination string) error {
 	return closeErr
 }
 
+func protectServicePath(path string, directory bool) error {
+	// Protected DACL: LocalSystem and built-in Administrators have full access.
+	// Apply an inheritable ACL to the directory and explicit ACLs to existing
+	// files so upgrades also repair permissions left by older installers.
+	sddl := "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
+	if directory {
+		sddl = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return err
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		dacl,
+		nil,
+	)
+}
+
 func controlRequest(method, endpoint string, body io.Reader) ([]byte, error) {
 	token, err := readLocalToken()
 	if err != nil {
@@ -401,6 +435,23 @@ func controlRequest(method, endpoint string, body io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	controlAddress := controlAddressFromDirectory(localDirectory)
+	data, err := controlRequestAt(controlAddress, method, endpoint, body, token)
+	if err == nil || method != "GET" || controlAddress == net.JoinHostPort("127.0.0.1", strconv.Itoa(fallbackControlPort)) {
+		return data, err
+	}
+	// Older installations can fall back to the built-in port when their
+	// protected port file is unreadable. Discover that listener on safe GETs,
+	// then persist the address so later POST operations use the same endpoint.
+	fallbackAddress := net.JoinHostPort("127.0.0.1", strconv.Itoa(fallbackControlPort))
+	data, fallbackErr := controlRequestAt(fallbackAddress, method, endpoint, body, token)
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("configured control endpoint failed (%v); fallback endpoint failed (%w)", err, fallbackErr)
+	}
+	_ = os.WriteFile(filepath.Join(localDirectory, "control.port"), []byte(strconv.Itoa(fallbackControlPort)), 0o600)
+	return data, nil
+}
+
+func controlRequestAt(controlAddress, method, endpoint string, body io.Reader, token string) ([]byte, error) {
 	request, err := http.NewRequest(method, "http://"+controlAddress+endpoint, body)
 	if err != nil {
 		return nil, err

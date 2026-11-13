@@ -34,6 +34,13 @@ configuration and logs are stored under `%ProgramData%\TlsNet`. The per-user
 control token is stored under `%LOCALAPPDATA%\TlsNet` and authenticates the GUI
 to the loopback-only service API.
 
+The installer applies a protected Windows DACL directly to the service data
+directory and each credential/configuration file: only LocalSystem and the
+built-in Administrators group receive access. Reinstalling also repairs ACLs
+created by older versions. The GUI can discover the built-in fallback control
+port when upgrading an installation whose stored port is temporarily
+unreadable.
+
 The release also contains a ZIP with the executable and the Wintun license for
 offline archiving. The standalone executable already embeds Wintun, so no DLL
 or PowerShell installer is required beside it.
