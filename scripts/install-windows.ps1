@@ -21,9 +21,15 @@ if ($LASTEXITCODE -ne 0) { throw "TlsNet rejected the configuration." }
 $programDirectory = Join-Path $env:ProgramFiles "TlsNet"
 $dataDirectory = Join-Path $env:ProgramData "TlsNet"
 New-Item -ItemType Directory -Force -Path $programDirectory, $dataDirectory | Out-Null
-Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $programDirectory "tlsnet.exe") -Force
-Copy-Item -LiteralPath $wintunPath -Destination (Join-Path $programDirectory "wintun.dll") -Force
-Copy-Item -LiteralPath $configPath -Destination (Join-Path $dataDirectory "config.toml") -Force
+function Copy-IfDifferent([string]$Source, [string]$Destination) {
+    $destinationPath = [IO.Path]::GetFullPath($Destination)
+    if (-not [string]::Equals($Source, $destinationPath, [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $Source -Destination $destinationPath -Force
+    }
+}
+Copy-IfDifferent $binaryPath (Join-Path $programDirectory "tlsnet.exe")
+Copy-IfDifferent $wintunPath (Join-Path $programDirectory "wintun.dll")
+Copy-IfDifferent $configPath (Join-Path $dataDirectory "config.toml")
 & icacls.exe $dataDirectory /inheritance:r /grant:r `
     "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 
