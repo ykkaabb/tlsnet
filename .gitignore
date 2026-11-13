@@ -1,0 +1,35 @@
+# Build output
+/bin/
+/dist/
+/build/
+*.exe
+*.apk
+*.aab
+*.aar
+
+# Go
+*.test
+coverage.out
+
+# Android / Gradle
+.gradle/
+local.properties
+**/build/
+*.jks
+*.keystore
+
+# Runtime configuration and credentials
+config.json
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
