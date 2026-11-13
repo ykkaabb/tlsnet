@@ -39,6 +39,36 @@ Home LAN (for example 192.168.3.0/24)
 
 ## 快速部署
 
+无需预先下载任何文件。云服务器直接执行：
+
+```bash
+curl -fsSL https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-bootstrap.sh \
+  | sudo bash -s -- relay
+```
+
+没有 curl 时使用 wget：
+
+```bash
+wget -qO- https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-bootstrap.sh \
+  | sudo bash -s -- relay
+```
+
+引导脚本会自动识别 AMD64/ARM64、查询最新版本、下载对应 Linux 包、校验
+`SHA256SUMS`，然后进入配置向导。仓库和下载均为公开访问，不需要 GitHub 账号。
+
+云服务器完成后，在家中 Linux/fnOS 执行同一命令，只把最后的角色改为
+`gateway`：
+
+```bash
+curl -fsSL https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-bootstrap.sh \
+  | sudo bash -s -- gateway
+```
+
+Linux 访问客户端使用 `client`。服务器生成的 join code 不含密码，家庭网关和
+客户端粘贴 join code 后再分别输入相同密码。
+
+### 本地构建与离线安装
+
 需要 Go 1.26 或更高版本：
 
 ```bash

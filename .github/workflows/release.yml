@@ -35,17 +35,21 @@ jobs:
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          New-Item -ItemType Directory -Force `
-            dist/linux-amd64/scripts, dist/linux-amd64/configs, dist/linux-amd64/packaging/linux, `
-            dist/windows-amd64/scripts, dist/windows-amd64/configs, dist/windows-amd64/clients/windows | Out-Null
           $env:CGO_ENABLED = '0'
-          $env:GOOS = 'linux'; $env:GOARCH = 'amd64'
-          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/linux-amd64/tlsnet ./cmd/tlsnet
-          Copy-Item README.md -Destination dist/linux-amd64
-          Copy-Item configs/*.toml -Destination dist/linux-amd64/configs
-          Copy-Item scripts/setup-linux.sh, scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination dist/linux-amd64/scripts
-          Copy-Item packaging/linux/tlsnet.service -Destination dist/linux-amd64/packaging/linux
-          chmod +x dist/linux-amd64/tlsnet dist/linux-amd64/scripts/setup-linux.sh dist/linux-amd64/scripts/install-linux.sh dist/linux-amd64/scripts/uninstall-linux.sh
+          $env:GOOS = 'linux'
+          foreach ($architecture in @('amd64', 'arm64')) {
+            $package = "dist/linux-$architecture"
+            New-Item -ItemType Directory -Force "$package/scripts", "$package/configs", "$package/packaging/linux" | Out-Null
+            $env:GOARCH = $architecture
+            go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$package/tlsnet" ./cmd/tlsnet
+            Copy-Item README.md -Destination $package
+            Copy-Item configs/*.toml -Destination "$package/configs"
+            Copy-Item scripts/setup-linux.sh, scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination "$package/scripts"
+            Copy-Item packaging/linux/tlsnet.service -Destination "$package/packaging/linux"
+            chmod +x "$package/tlsnet" "$package/scripts/setup-linux.sh" "$package/scripts/install-linux.sh" "$package/scripts/uninstall-linux.sh"
+            tar -C $package -czf "dist/tlsnet-$version-linux-$architecture.tar.gz" .
+          }
+          New-Item -ItemType Directory -Force dist/windows-amd64/scripts, dist/windows-amd64/configs, dist/windows-amd64/clients/windows | Out-Null
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/windows-amd64/tlsnet.exe ./cmd/tlsnet
           ./scripts/get-wintun.ps1 -Destination dist/windows-amd64
@@ -53,7 +57,6 @@ jobs:
           Copy-Item configs/client.example.toml -Destination dist/windows-amd64/configs
           Copy-Item scripts/setup-windows.ps1, scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64/scripts
           Copy-Item clients/windows/README.md -Destination dist/windows-amd64/clients/windows
-          tar -C dist/linux-amd64 -czf "dist/tlsnet-$version-linux-amd64.tar.gz" .
           Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/tlsnet-$version-windows-amd64.zip"
       - name: Build Android APK
         env:
@@ -70,6 +73,12 @@ jobs:
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
           Copy-Item clients/android/app/build/outputs/apk/release/app-release.apk "dist/tlsnet-$version-android.apk"
+      - name: Generate checksums and bootstrap
+        run: |
+          cp scripts/bootstrap-linux.sh dist/tlsnet-bootstrap.sh
+          chmod +x dist/tlsnet-bootstrap.sh
+          cd dist
+          sha256sum *.tar.gz *.zip *.apk tlsnet-bootstrap.sh > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: tlsnet-packages
@@ -77,8 +86,10 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.apk
+            dist/SHA256SUMS
+            dist/tlsnet-bootstrap.sh
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk dist/SHA256SUMS dist/tlsnet-bootstrap.sh --generate-notes
