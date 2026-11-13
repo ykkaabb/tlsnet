@@ -179,7 +179,7 @@ func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *
 
 func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.ServerOptions) {
 	defer raw.Close()
-	tuneTCP(raw)
+	tuneTCP(raw, r.cfg.Transport.TLS.KeepAlive.Duration, r.cfg.Transport.TLS.TCPUserTimeout.Duration)
 	helloTLS, err := tlsreality.PeekClientHello(raw, 0, 5*time.Second)
 	if err != nil {
 		r.logger.Debug("invalid TLS preface", "remote", raw.RemoteAddr(), "error", err)
@@ -776,7 +776,8 @@ func dialLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello co
 	if err != nil {
 		return nil, control.Welcome{}, err
 	}
-	tuneTCP(raw)
+	tuneTCP(raw, cfg.Transport.TLS.KeepAlive.Duration, cfg.Transport.TLS.TCPUserTimeout.Duration)
+	_ = raw.SetDeadline(time.Now().Add(10 * time.Second))
 	conn, err := tlsreality.Client(raw, tlsreality.ClientOptions{
 		ServerName: cfg.Reality.ServerName, Keys: keys, TimeWindow: cfg.Reality.TimeWindow.Duration,
 	})
@@ -811,6 +812,7 @@ func dialLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello co
 		_ = conn.Close()
 		return nil, control.Welcome{}, errors.New(welcome.Error)
 	}
+	_ = conn.SetDeadline(time.Time{})
 	return conn, welcome, nil
 }
 
@@ -843,13 +845,21 @@ func reportFailure(target chan<- error, err error) {
 	}
 }
 
-func tuneTCP(conn net.Conn) {
+func tuneTCP(conn net.Conn, keepAlive, userTimeout time.Duration) {
 	tcp, ok := conn.(*net.TCPConn)
 	if !ok {
 		return
 	}
+	if keepAlive <= 0 {
+		keepAlive = 20 * time.Second
+	}
+	interval := keepAlive / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
 	_ = tcp.SetNoDelay(true)
 	_ = tcp.SetKeepAliveConfig(net.KeepAliveConfig{
-		Enable: true, Idle: 30 * time.Second, Interval: 10 * time.Second, Count: 3,
+		Enable: true, Idle: keepAlive, Interval: interval, Count: 3,
 	})
+	_ = setTCPUserTimeout(tcp, userTimeout)
 }

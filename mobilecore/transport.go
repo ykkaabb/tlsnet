@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/ykkaabb/tlsnet/internal/auth"
 	"github.com/ykkaabb/tlsnet/internal/config"
@@ -237,10 +238,22 @@ func exchangeHelloQUIC(ctx context.Context, tunnel *quicreality.H3Tunnel, hello 
 }
 
 func dialMobileLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello control.Hello) (net.Conn, control.Welcome, error) {
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Server.Address)
+	raw, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", cfg.Server.Address)
 	if err != nil {
 		return nil, control.Welcome{}, err
 	}
+	if tcp, ok := raw.(*net.TCPConn); ok {
+		keepAlive := cfg.Transport.TLS.KeepAlive.Duration
+		interval := keepAlive / 3
+		if interval < time.Second {
+			interval = time.Second
+		}
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetKeepAliveConfig(net.KeepAliveConfig{
+			Enable: true, Idle: keepAlive, Interval: interval, Count: 3,
+		})
+	}
+	_ = raw.SetDeadline(time.Now().Add(10 * time.Second))
 	conn, err := tlsreality.Client(raw, tlsreality.ClientOptions{
 		ServerName: cfg.Reality.ServerName, Keys: keys, TimeWindow: cfg.Reality.TimeWindow.Duration,
 	})
@@ -275,6 +288,7 @@ func dialMobileLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, he
 		_ = conn.Close()
 		return nil, control.Welcome{}, errors.New(welcome.Error)
 	}
+	_ = conn.SetDeadline(time.Time{})
 	return conn, welcome, nil
 }
 
