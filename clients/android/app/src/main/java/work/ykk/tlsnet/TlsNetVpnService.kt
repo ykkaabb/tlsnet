@@ -13,9 +13,11 @@ import mobilecore.Mobilecore
 import org.json.JSONObject
 import java.net.InetAddress
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 class TlsNetVpnService : VpnService() {
     private val executor = Executors.newSingleThreadExecutor()
+    private val generation = AtomicLong()
     @Volatile private var engine: Engine? = null
     @Volatile private var vpn: ParcelFileDescriptor? = null
 
@@ -27,6 +29,7 @@ class TlsNetVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                generation.incrementAndGet()
                 stopTunnel()
                 stopSelf()
             }
@@ -37,44 +40,63 @@ class TlsNetVpnService : VpnService() {
                     return START_NOT_STICKY
                 }
                 startForeground(NOTIFICATION_ID, notification("Connecting…"))
-                executor.execute { connect(config) }
+                val ticket = generation.incrementAndGet()
+                stopTunnel()
+                executor.execute { connectLoop(config, ticket) }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun connect(config: String) {
-        stopTunnel()
-        try {
-            val current = Mobilecore.newEngine(config)
-            engine = current
-            val info = JSONObject(current.prepare())
-            val address = parsePrefix(info.getString("Address"))
-            val builder = Builder()
-                .setSession("TlsNet")
-                .setMtu(info.getInt("MTU"))
-                .addAddress(address.first, address.second)
-                .allowFamily(android.system.OsConstants.AF_INET)
-            val routes = info.getJSONArray("Routes")
-            for (index in 0 until routes.length()) {
-                val route = parsePrefix(routes.getString(index))
-                builder.addRoute(route.first, route.second)
+    private fun connectLoop(config: String, ticket: Long) {
+        var backoffSeconds = 1L
+        while (generation.get() == ticket) {
+            try {
+                connectOnce(config)
+                backoffSeconds = 1L
+            } catch (error: Throwable) {
+                if (generation.get() == ticket) {
+                    updateNotification(
+                        "Disconnected: ${error.message ?: error.javaClass.simpleName}; " +
+                            "retrying in ${backoffSeconds}s",
+                    )
+                }
+            } finally {
+                stopTunnel()
             }
-            if (Build.VERSION.SDK_INT >= 29) {
-                builder.setBlocking(true)
+            if (generation.get() != ticket) break
+            try {
+                Thread.sleep(backoffSeconds * 1_000)
+            } catch (_: InterruptedException) {
+                break
             }
-            val descriptor = builder.establish() ?: error("Android refused to establish VPN")
-            vpn = descriptor
-            val fd = descriptor.detachFd()
-            updateNotification("Connected via " + info.getString("Transport"))
-            current.run(fd.toLong())
-        } catch (error: Throwable) {
-            updateNotification("Disconnected: " + (error.message ?: error.javaClass.simpleName))
-        } finally {
-            stopTunnel()
-            stopForeground(STOP_FOREGROUND_DETACH)
-            stopSelf()
+            backoffSeconds = (backoffSeconds * 2).coerceAtMost(30)
         }
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun connectOnce(config: String) {
+        val current = Mobilecore.newEngine(config)
+        engine = current
+        val info = JSONObject(current.prepare())
+        val address = parsePrefix(info.getString("Address"))
+        val builder = Builder()
+            .setSession("TlsNet")
+            .setMtu(info.getInt("MTU"))
+            .addAddress(address.first, address.second)
+            .allowFamily(android.system.OsConstants.AF_INET)
+        val routes = info.getJSONArray("Routes")
+        for (index in 0 until routes.length()) {
+            val route = parsePrefix(routes.getString(index))
+            builder.addRoute(route.first, route.second)
+        }
+        if (Build.VERSION.SDK_INT >= 29) builder.setBlocking(true)
+        val descriptor = builder.establish() ?: error("Android refused to establish VPN")
+        vpn = descriptor
+        val fd = descriptor.detachFd()
+        updateNotification("Connected via " + info.getString("Transport"))
+        current.run(fd.toLong())
     }
 
     private fun parsePrefix(value: String): Pair<InetAddress, Int> {
@@ -92,12 +114,14 @@ class TlsNetVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        generation.incrementAndGet()
         stopTunnel()
         stopSelf()
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        generation.incrementAndGet()
         stopTunnel()
         executor.shutdownNow()
         super.onDestroy()
