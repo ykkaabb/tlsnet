@@ -4,9 +4,8 @@ TlsNet 是一个以云服务器为中心的 L3 虚拟网络项目，目标是在
 组网平台的前提下，为 Linux、Windows 和 Android 提供服务器中继组网以及
 点对网访问。
 
-公网传输使用带可配置 SNI 的标准 TLS/TCP，并行建立多条独立数据通道，降低
-单条 TCP 发生重传时的队头阻塞。家庭 Linux/fnOS 节点可以发布局域网子网，
-远程客户端通过云端中继访问该子网。
+公网传输将支持 QUIC 和带可配置 SNI 的多通道 TLS/TCP。家庭 Linux/fnOS
+节点可以发布局域网子网，远程客户端通过云端中继访问该子网。
 
 ## 目标拓扑
 
@@ -25,9 +24,10 @@ Home LAN (for example 192.168.3.0/24)
 
 ## 仓库状态
 
-项目目前处于架构和协议重构阶段。`prototype/tlstun` 保存已经验证过的
-TlsTun 0.5 多通道 Linux 点对点实现，作为新协议的数据面基线。它还不是
-可替代 EasyTier 的完整组网版本。
+项目目前已有可运行的 Linux TCP 单通道闭环：中继分配地址、严格授权子网
+发布、最长前缀转发、源地址校验、Linux TUN 和网关 NAT。TCP 伪装入口及
+QUIC 授权门卫均已实现；QUIC 数据面、多 TLS 通道调度、Windows 和 Android
+尚未接入，因此还不能替代生产中的 EasyTier。
 
 计划中的首个完整版本包含：
 
@@ -41,22 +41,29 @@ TlsTun 0.5 多通道 Linux 点对点实现，作为新协议的数据面基线�
 
 详细设计见 [docs/architecture.md](docs/architecture.md)。
 
-## 验证原型
+## 构建和检查配置
 
 需要 Go 1.24 或更高版本：
 
 ```bash
-go test ./prototype/tlstun
+go test ./...
 ```
 
 Linux 构建：
 
 ```bash
-go build -o bin/tlstun-prototype ./prototype/tlstun
+go build -o bin/tlsnet ./cmd/tlsnet
+./bin/tlsnet check -c configs/relay.example.toml
+sudo ./bin/tlsnet run -c config.toml
 ```
+
+复制 `configs` 中对应角色的示例为 `config.toml`，三端填写完全相同的
+`network_name`、`password` 和 `server_name`。中继必须在
+`relay.allowed_routes` 中逐节点批准网关发布的子网；网关 NAT 还要把
+`gateway.lan_interface` 改成实际家庭 LAN 接口。
 
 ## 安全提示
 
 仓库中的代码尚未经过独立安全审计。不要把真实网络密码、证书私钥、服务器
-地址或生产配置提交到 Git。子网发布权必须由服务端静态授权，不能信任客户端
-自行声明。
+地址或生产配置提交到 Git。子网发布权由中继的 `relay.allowed_routes`
+静态授权，不能只信任客户端声明。

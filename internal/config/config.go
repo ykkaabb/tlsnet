@@ -20,6 +20,7 @@ type Config struct {
 	Auth          Auth      `toml:"auth"`
 	Listen        Listen    `toml:"listen"`
 	Server        Server    `toml:"server"`
+	Relay         Relay     `toml:"relay"`
 	Reality       Reality   `toml:"reality"`
 	Transport     Transport `toml:"transport"`
 	Overlay       Overlay   `toml:"overlay"`
@@ -48,6 +49,10 @@ type Listen struct {
 
 type Server struct {
 	Address string `toml:"address"`
+}
+
+type Relay struct {
+	AllowedRoutes map[string][]string `toml:"allowed_routes"`
 }
 
 type Reality struct {
@@ -278,11 +283,24 @@ func (c *Config) Validate() error {
 		if _, err := netip.ParsePrefix(c.Overlay.Pool); err != nil {
 			return fmt.Errorf("overlay.pool: %w", err)
 		}
+		for node, routes := range c.Relay.AllowedRoutes {
+			if strings.TrimSpace(node) == "" {
+				return errors.New("relay.allowed_routes contains an empty node name")
+			}
+			for _, route := range routes {
+				if _, err := netip.ParsePrefix(route); err != nil {
+					return fmt.Errorf("relay.allowed_routes.%s contains invalid route %q", node, route)
+				}
+			}
+		}
 	}
 	for _, route := range append(append([]string{}, c.Overlay.AdvertiseRoutes...), c.Overlay.AcceptRoutes...) {
 		if _, err := netip.ParsePrefix(route); err != nil {
 			return fmt.Errorf("invalid overlay route %q: %w", route, err)
 		}
+	}
+	if c.Node.Role == "gateway" && c.Gateway.NAT && strings.TrimSpace(c.Gateway.LANInterface) == "" {
+		return errors.New("gateway.lan_interface is required when gateway.nat is true")
 	}
 	return nil
 }

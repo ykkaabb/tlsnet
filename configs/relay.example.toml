@@ -16,6 +16,9 @@ kdf_parallelism = 2
 tcp = "0.0.0.0:443"
 udp = "0.0.0.0:443"
 
+[relay.allowed_routes]
+home = ["192.168.3.0/24"]
+
 [reality]
 server_name = "www.speedtest.cn"
 tcp_target = "www.speedtest.cn:443"
