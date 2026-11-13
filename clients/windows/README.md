@@ -25,6 +25,10 @@ Service lifecycle changes request administrator approval and are preceded by a
 separate confirmation inside TlsNet. This remains explicit even on Windows
 systems whose UAC policy automatically approves elevation for administrators.
 
+The local control API remains available when tunnel initialization fails. The
+GUI status and log view therefore report the underlying configuration, driver,
+or network error instead of reducing it to a generic connection-refused error.
+
 Service files are installed under `%ProgramFiles%\TlsNet`; protected runtime
 configuration and logs are stored under `%ProgramData%\TlsNet`. The per-user
 control token is stored under `%LOCALAPPDATA%\TlsNet` and authenticates the GUI

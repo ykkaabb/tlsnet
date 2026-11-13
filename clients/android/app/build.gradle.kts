@@ -11,8 +11,8 @@ android {
         applicationId = "work.ykk.tlsnet"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.4.1"
+        versionCode = 7
+        versionName = "0.4.2"
     }
 
     val releaseStore = System.getenv("TLSNET_SIGNING_STORE_FILE")

@@ -47,6 +47,16 @@ type statusResponse struct {
 }
 
 func runService() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Windows services start with System32 as their working directory. Wintun is
+	// deliberately installed beside TlsNet.exe, so make DLL discovery independent
+	// of how the Service Control Manager launched the process.
+	if err := os.Chdir(filepath.Dir(executable)); err != nil {
+		return fmt.Errorf("use installed application directory: %w", err)
+	}
 	return svc.Run(serviceName, serviceHandler{})
 }
 
@@ -71,10 +81,10 @@ func (serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, cha
 	}
 	go func() { _ = api.Serve(listener) }()
 	if _, err := os.Stat(filepath.Join(data, "config.toml")); err == nil {
-		if err := controller.start(); err != nil {
-			_ = listener.Close()
-			return true, 3
-		}
+		// A bad tunnel configuration must not take down the control plane. Keeping
+		// the service and API alive lets the GUI display the real error, show logs,
+		// and accept a corrected configuration.
+		_ = controller.start()
 	}
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
@@ -149,14 +159,22 @@ func controlHandler(controller *tunnelController, token, dataDirectory string) h
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if status := controller.status(); status.LastError != "" {
+			contents = append([]byte("TlsNet last error: "+status.LastError+"\n\n"), contents...)
+		}
 		_, _ = writer.Write(contents)
 	}))
 	return mux
 }
 
-func (controller *tunnelController) start() error {
+func (controller *tunnelController) start() (startErr error) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
+	defer func() {
+		if startErr != nil {
+			controller.lastError = startErr.Error()
+		}
+	}()
 	if controller.running {
 		return nil
 	}
