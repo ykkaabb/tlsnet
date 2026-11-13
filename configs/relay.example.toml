@@ -1,0 +1,58 @@
+config_version = 1
+
+[node]
+role = "relay"
+name = "server"
+
+[auth]
+network_name = "example-network"
+password = "replace-with-a-strong-password"
+kdf = "argon2id"
+kdf_memory_mib = 64
+kdf_iterations = 3
+kdf_parallelism = 2
+
+[listen]
+tcp = "0.0.0.0:443"
+udp = "0.0.0.0:443"
+
+[reality]
+server_name = "www.speedtest.cn"
+tcp_target = "www.speedtest.cn:443"
+udp_target = "www.speedtest.cn:443"
+client_fingerprint = "chrome"
+time_window = "1m"
+fallback_max_connections_per_ip = 4
+fallback_max_connections = 128
+fallback_idle_timeout = "15s"
+fallback_max_lifetime = "2m"
+
+[transport]
+mode = "auto"
+
+[transport.quic]
+enabled = true
+reality = true
+alpn = "h3"
+keepalive = "15s"
+idle_timeout = "60s"
+initial_packet_size = 1200
+path_mtu_discovery = true
+
+[transport.tls]
+enabled = true
+reality = true
+lanes = 4
+reorder_wait = "5ms"
+keepalive = "20s"
+tcp_user_timeout = "30s"
+
+[overlay]
+name = "tlsnet0"
+address = "10.91.0.1/24"
+pool = "10.91.0.0/24"
+mtu = 1280
+
+[logging]
+level = "info"
+stats_interval = "10s"

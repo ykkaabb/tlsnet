@@ -1,0 +1,39 @@
+config_version = 1
+
+[node]
+role = "client"
+name = "laptop"
+
+[auth]
+network_name = "example-network"
+password = "replace-with-the-same-password"
+
+[server]
+address = "203.0.113.1:443"
+
+[reality]
+server_name = "www.speedtest.cn"
+tcp_target = "www.speedtest.cn:443"
+udp_target = "www.speedtest.cn:443"
+
+[transport]
+mode = "auto"
+
+[transport.quic]
+enabled = true
+reality = true
+
+[transport.tls]
+enabled = true
+reality = true
+lanes = 4
+
+[overlay]
+name = "tlsnet0"
+address = "auto"
+mtu = 1280
+accept_routes = ["10.91.0.0/24", "192.168.3.0/24"]
+
+[logging]
+level = "info"
+stats_interval = "10s"

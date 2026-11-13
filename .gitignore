@@ -20,6 +20,8 @@ local.properties
 
 # Runtime configuration and credentials
 config.json
+config.toml
+*.local.toml
 *.crt
 *.key
 *.pem
