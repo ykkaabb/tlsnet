@@ -110,6 +110,7 @@ func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *
 
 func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.ServerOptions) {
 	defer raw.Close()
+	tuneTCP(raw)
 	helloTLS, err := tlsreality.PeekClientHello(raw, 0, 5*time.Second)
 	if err != nil {
 		r.logger.Debug("invalid TLS preface", "remote", raw.RemoteAddr(), "error", err)
@@ -243,6 +244,16 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 		return err
 	}
 	defer raw.Close()
+	tuneTCP(raw)
+	cancelWatch := make(chan struct{})
+	defer close(cancelWatch)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = raw.Close()
+		case <-cancelWatch:
+		}
+	}()
 	conn, err := tlsreality.Client(raw, tlsreality.ClientOptions{
 		ServerName: cfg.Reality.ServerName, Keys: keys, TimeWindow: cfg.Reality.TimeWindow.Duration,
 	})
@@ -324,4 +335,15 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 			}
 		}
 	}
+}
+
+func tuneTCP(conn net.Conn) {
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcp.SetNoDelay(true)
+	_ = tcp.SetKeepAliveConfig(net.KeepAliveConfig{
+		Enable: true, Idle: 30 * time.Second, Interval: 10 * time.Second, Count: 3,
+	})
 }

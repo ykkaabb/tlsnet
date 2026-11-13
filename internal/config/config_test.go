@@ -76,6 +76,7 @@ func TestRejectsInvalidMode(t *testing.T) {
 		Transport:     Transport{Mode: "invalid", QUIC: QUICTransport{InitialPacketSize: 1200}, TLS: TLSTransport{Lanes: 4}},
 		Overlay:       Overlay{MTU: 1280},
 	}
+	cfg.defaults()
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "transport.mode") {
 		t.Fatalf("unexpected error: %v", err)
 	}

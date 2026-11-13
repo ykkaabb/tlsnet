@@ -228,6 +228,12 @@ func (c *Config) Validate() error {
 	if c.Auth.KDFParallelism < 1 || c.Auth.KDFParallelism > 64 {
 		return errors.New("auth.kdf_parallelism must be 1..64")
 	}
+	if c.Reality.TimeWindow.Duration <= 0 {
+		return errors.New("reality.time_window must be positive")
+	}
+	if c.Reality.FallbackIdleTimeout.Duration <= 0 || c.Reality.FallbackMaxLifetime.Duration <= 0 {
+		return errors.New("reality fallback timeouts must be positive")
+	}
 	if err := validateDNSName(c.Reality.ServerName); err != nil {
 		return fmt.Errorf("reality.server_name: %w", err)
 	}
@@ -270,6 +276,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Transport.QUIC.InitialPacketSize < 1200 || c.Transport.QUIC.InitialPacketSize > 1452 {
 		return errors.New("transport.quic.initial_packet_size must be 1200..1452")
+	}
+	if c.Transport.QUIC.KeepAlive.Duration <= 0 || c.Transport.QUIC.IdleTimeout.Duration <= 0 {
+		return errors.New("transport.quic timeouts must be positive")
+	}
+	if c.Transport.TLS.ReorderWait.Duration <= 0 || c.Transport.TLS.KeepAlive.Duration <= 0 || c.Transport.TLS.TCPUserTimeout.Duration <= 0 {
+		return errors.New("transport.tls timeouts must be positive")
 	}
 	if c.Overlay.MTU < 576 || c.Overlay.MTU > 9000 {
 		return errors.New("overlay.mtu must be 576..9000")
