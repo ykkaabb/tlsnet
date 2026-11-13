@@ -119,8 +119,16 @@ func Load(path string) (*Config, error) {
 	if info.IsDir() {
 		return nil, errors.New("config path is a directory")
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	return Parse(data)
+}
+
+func Parse(data []byte) (*Config, error) {
 	var cfg Config
-	meta, err := toml.DecodeFile(path, &cfg)
+	meta, err := toml.Decode(string(data), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("decode TOML: %w", err)
 	}

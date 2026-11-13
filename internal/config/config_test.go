@@ -55,6 +55,25 @@ accept_routes = ["192.168.3.0/24"]
 	}
 }
 
+func TestParseInMemory(t *testing.T) {
+	data := "config_version = 1\n" +
+		"[node]\nrole = \"client\"\nname = \"android\"\n" +
+		"[auth]\nnetwork_name = \"testnet\"\npassword = \"password\"\n" +
+		"[server]\naddress = \"203.0.113.1:443\"\n" +
+		"[reality]\nserver_name = \"www.speedtest.cn\"\ntcp_target = \"www.speedtest.cn:443\"\n" +
+		"[transport]\nmode = \"quic\"\n" +
+		"[transport.quic]\nenabled = true\n" +
+		"[transport.tls]\nlanes = 2\n" +
+		"[overlay]\naddress = \"auto\"\n"
+	cfg, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Node.Name != "android" || cfg.Transport.Mode != "quic" {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+}
+
 func TestRejectsUnknownField(t *testing.T) {
 	path := writeConfig(t, `
 config_version = 1
