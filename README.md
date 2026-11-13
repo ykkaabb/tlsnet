@@ -24,10 +24,10 @@ Home LAN (for example 192.168.3.0/24)
 
 ## 仓库状态
 
-项目目前已有可运行的 Linux 多 TLS 通道闭环：中继分配地址、严格授权子网
-发布、最长前缀转发、源地址校验、Linux TUN、网关 NAT、故障通道剔除和
-有界乱序恢复。TCP 伪装入口及 QUIC 授权门卫均已实现；QUIC 数据面、
-自动重连、Windows 和 Android 尚未接入，因此还不能替代生产中的 EasyTier。
+项目目前已有可运行的 Linux QUIC/HTTP3 与多 TLS 通道闭环：中继分配地址、
+严格授权子网发布、最长前缀转发、源地址校验、Linux TUN、网关 NAT、
+故障通道剔除和有界乱序恢复。自动重连、Windows 和 Android 尚未接入，
+因此还不能替代生产中的 EasyTier。
 
 计划中的首个完整版本包含：
 
@@ -61,6 +61,10 @@ sudo ./bin/tlsnet run -c config.toml
 `network_name`、`password` 和 `server_name`。中继必须在
 `relay.allowed_routes` 中逐节点批准网关发布的子网；网关 NAT 还要把
 `gateway.lan_interface` 改成实际家庭 LAN 接口。
+
+`transport.mode = "quic"` 仅使用真实 HTTP/3 Datagrams，
+`"tls-multipath"` 仅使用多 TLS/TCP，`"auto"` 优先 QUIC 并在建连失败时
+回退到多 TLS。中继可以在同一数字端口上同时监听 TCP 和 UDP。
 
 ## 安全提示
 
