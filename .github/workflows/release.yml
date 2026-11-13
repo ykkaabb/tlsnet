@@ -76,9 +76,10 @@ jobs:
       - name: Generate checksums and bootstrap
         run: |
           cp scripts/bootstrap-linux.sh dist/tlsnet-bootstrap.sh
+          cp scripts/bootstrap-windows.ps1 dist/tlsnet-bootstrap.ps1
           chmod +x dist/tlsnet-bootstrap.sh
           cd dist
-          sha256sum *.tar.gz *.zip *.apk tlsnet-bootstrap.sh > SHA256SUMS
+          sha256sum *.tar.gz *.zip *.apk tlsnet-bootstrap.sh tlsnet-bootstrap.ps1 > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: tlsnet-packages
@@ -88,8 +89,9 @@ jobs:
             dist/*.apk
             dist/SHA256SUMS
             dist/tlsnet-bootstrap.sh
+            dist/tlsnet-bootstrap.ps1
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk dist/SHA256SUMS dist/tlsnet-bootstrap.sh --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk dist/SHA256SUMS dist/tlsnet-bootstrap.sh dist/tlsnet-bootstrap.ps1 --generate-notes

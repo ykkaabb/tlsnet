@@ -67,6 +67,15 @@ curl -fsSL https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-boo
 Linux 访问客户端使用 `client`。服务器生成的 join code 不含密码，家庭网关和
 客户端粘贴 join code 后再分别输入相同密码。
 
+Windows 客户端请用管理员身份打开 PowerShell，然后执行：
+
+```powershell
+irm https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-bootstrap.ps1 | iex
+```
+
+它会自动下载最新版 Windows 包、验证 SHA-256，并进入客户端配置向导；无需
+手动下载或解压 Release 包。
+
 ### 本地构建与离线安装
 
 需要 Go 1.26 或更高版本：

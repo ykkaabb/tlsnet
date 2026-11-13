@@ -28,6 +28,22 @@ jobs:
         run: go vet ./...
       - name: Legacy prototype tests
         run: go test ./prototype/tlstun
+      - name: Validate shell scripts
+        run: bash -n scripts/*.sh
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$_" }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
       - name: Build Linux AMD64
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-linux-amd64 ./cmd/tlsnet
       - name: Build Linux ARM64

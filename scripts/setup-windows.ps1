@@ -20,7 +20,8 @@ if (Test-Path -LiteralPath $installedConfig) {
     $answer = Read-Host "Reuse existing $installedConfig? [Y/n]"
     if ([string]::IsNullOrWhiteSpace($answer) -or $answer -notmatch '^[Nn]$') {
         & $installer -Binary $binaryPath -Wintun $wintunPath -Config $installedConfig
-        exit $LASTEXITCODE
+        if ($LASTEXITCODE -ne 0) { throw "Installation failed." }
+        return
     }
 }
 
