@@ -205,7 +205,7 @@ func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.Ser
 	}
 	var p *peer
 	var welcome control.Welcome
-	if hello.Lane == 0 {
+	if hello.SessionID == "" {
 		p, welcome, err = r.register(hello, conn)
 	} else {
 		p, welcome, err = r.attach(hello, conn)
@@ -218,7 +218,7 @@ func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.Ser
 	if err := sendWelcome(conn, welcome); err != nil {
 		return
 	}
-	if hello.Lane == 0 {
+	if hello.SessionID == "" {
 		r.logger.Info("node connected", "node", p.node, "address", p.address)
 	} else {
 		r.logger.Info("transport lane joined", "node", p.node, "lane", hello.Lane)
@@ -740,7 +740,7 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 	go reportTraffic(nodeContext, logger, cfg.Logging.StatsInterval.Duration, "node/"+cfg.Node.Name, stats)
 	go (multipath.Reorderer{Wait: cfg.Transport.TLS.ReorderWait.Duration}).Run(nodeContext, incoming, ordered)
 	for id, conn := range connections {
-		go readLane(nodeContext, id, conn, lanes, incoming, failures)
+		go maintainLane(nodeContext, id, conn, cfg, keys, hello, welcome.SessionID, lanes, incoming, failures, logger)
 	}
 	go func() {
 		buffer := make([]byte, 65535)
@@ -825,25 +825,59 @@ func dialLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello co
 	return conn, welcome, nil
 }
 
-func readLane(ctx context.Context, id int, conn net.Conn, lanes *multipath.Set, output chan<- wire.Frame, failures chan<- error) {
-	defer func() {
-		lanes.Remove(id)
-		if lanes.Len() == 0 && ctx.Err() == nil {
-			reportFailure(failures, multipath.ErrNoHealthyLane)
-		}
-	}()
+func maintainLane(
+	ctx context.Context, id int, conn net.Conn, cfg *config.Config, keys *auth.Keys,
+	baseHello control.Hello, sessionID string, lanes *multipath.Set, output chan<- wire.Frame,
+	failures chan<- error, logger *slog.Logger,
+) {
+	backoff := time.Second
 	for {
-		frame, err := wire.ReadFrame(conn)
-		if err != nil {
-			return
-		}
-		if frame.Type == wire.TypeData {
-			select {
-			case output <- frame:
-			case <-ctx.Done():
-				return
+		for {
+			frame, err := wire.ReadFrame(conn)
+			if err != nil {
+				break
+			}
+			if frame.Type == wire.TypeData {
+				select {
+				case output <- frame:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
+		lanes.Remove(id)
+		if ctx.Err() != nil {
+			return
+		}
+		if lanes.Len() == 0 {
+			reportFailure(failures, multipath.ErrNoHealthyLane)
+			return
+		}
+		logger.Warn("transport lane disconnected; repairing", "lane", id, "after", backoff)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		hello := baseHello
+		hello.Lane = id
+		hello.SessionID = sessionID
+		replacement, _, err := dialLane(ctx, cfg, keys, hello)
+		if err != nil {
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		if err := lanes.Add(id, replacement); err != nil {
+			_ = replacement.Close()
+			continue
+		}
+		conn = replacement
+		backoff = time.Second
+		logger.Info("transport lane restored", "lane", id)
 	}
 }
 

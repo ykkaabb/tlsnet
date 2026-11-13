@@ -187,7 +187,7 @@ func connectMobileTLS(parent context.Context, cfg *config.Config, keys *auth.Key
 	failures := make(chan error, 1)
 	go (multipath.Reorderer{Wait: cfg.Transport.TLS.ReorderWait.Duration}).Run(ctx, input, ordered)
 	for id, conn := range connections {
-		go readMobileLane(ctx, id, conn, lanes, input, failures)
+		go maintainMobileLane(ctx, id, conn, cfg, keys, welcome.SessionID, lanes, input, failures)
 	}
 	return &mobileTLS{
 		ctx: ctx, cancel: cancel, lanes: lanes, welcome: welcome,
@@ -307,27 +307,59 @@ func dialMobileLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, he
 	return conn, welcome, nil
 }
 
-func readMobileLane(ctx context.Context, id int, conn net.Conn, lanes *multipath.Set, output chan<- wire.Frame, failures chan<- error) {
-	defer func() {
+func maintainMobileLane(
+	ctx context.Context, id int, conn net.Conn, cfg *config.Config, keys *auth.Keys,
+	sessionID string, lanes *multipath.Set, output chan<- wire.Frame, failures chan<- error,
+) {
+	backoff := time.Second
+	for {
+		for {
+			frame, err := wire.ReadFrame(conn)
+			if err != nil {
+				break
+			}
+			if frame.Type == wire.TypeData {
+				select {
+				case output <- frame:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
 		lanes.Remove(id)
-		if lanes.Len() == 0 && ctx.Err() == nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if lanes.Len() == 0 {
 			select {
 			case failures <- multipath.ErrNoHealthyLane:
 			default:
 			}
-		}
-	}()
-	for {
-		frame, err := wire.ReadFrame(conn)
-		if err != nil {
 			return
 		}
-		if frame.Type == wire.TypeData {
-			select {
-			case output <- frame:
-			case <-ctx.Done():
-				return
-			}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
+		hello := mobileHello(cfg, id, sessionID)
+		if err := control.SignHello(&hello, keys.Session[:]); err != nil {
+			return
+		}
+		replacement, _, err := dialMobileLane(ctx, cfg, keys, hello)
+		if err != nil {
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		if err := lanes.Add(id, replacement); err != nil {
+			_ = replacement.Close()
+			continue
+		}
+		conn = replacement
+		backoff = time.Second
 	}
 }
