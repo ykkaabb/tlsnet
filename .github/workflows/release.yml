@@ -35,24 +35,41 @@ jobs:
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          New-Item -ItemType Directory -Force dist/linux-amd64, dist/windows-amd64 | Out-Null
+          New-Item -ItemType Directory -Force `
+            dist/linux-amd64/scripts, dist/linux-amd64/configs, dist/linux-amd64/packaging/linux, `
+            dist/windows-amd64/scripts, dist/windows-amd64/configs, dist/windows-amd64/clients/windows | Out-Null
           $env:CGO_ENABLED = '0'
           $env:GOOS = 'linux'; $env:GOARCH = 'amd64'
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/linux-amd64/tlsnet ./cmd/tlsnet
-          Copy-Item README.md, configs/relay.example.toml, configs/gateway.example.toml, configs/client.example.toml, scripts/install-linux.sh, scripts/uninstall-linux.sh, packaging/linux/tlsnet.service -Destination dist/linux-amd64
+          Copy-Item README.md -Destination dist/linux-amd64
+          Copy-Item configs/*.toml -Destination dist/linux-amd64/configs
+          Copy-Item scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination dist/linux-amd64/scripts
+          Copy-Item packaging/linux/tlsnet.service -Destination dist/linux-amd64/packaging/linux
+          chmod +x dist/linux-amd64/tlsnet dist/linux-amd64/scripts/install-linux.sh dist/linux-amd64/scripts/uninstall-linux.sh
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/windows-amd64/tlsnet.exe ./cmd/tlsnet
           ./scripts/get-wintun.ps1 -Destination dist/windows-amd64
-          Copy-Item README.md, configs/client.example.toml, scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64
+          Copy-Item README.md -Destination dist/windows-amd64
+          Copy-Item configs/client.example.toml -Destination dist/windows-amd64/configs
+          Copy-Item scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64/scripts
+          Copy-Item clients/windows/README.md -Destination dist/windows-amd64/clients/windows
           tar -C dist/linux-amd64 -czf "dist/tlsnet-$version-linux-amd64.tar.gz" .
           Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/tlsnet-$version-windows-amd64.zip"
       - name: Build Android APK
-        run: ./scripts/build-android.sh
+        env:
+          TLSNET_KEYSTORE_BASE64: ${{ secrets.TLSNET_KEYSTORE_BASE64 }}
+          TLSNET_SIGNING_STORE_FILE: ${{ runner.temp }}/tlsnet-release.jks
+          TLSNET_SIGNING_STORE_PASSWORD: ${{ secrets.TLSNET_SIGNING_STORE_PASSWORD }}
+          TLSNET_SIGNING_KEY_ALIAS: ${{ secrets.TLSNET_SIGNING_KEY_ALIAS }}
+          TLSNET_SIGNING_KEY_PASSWORD: ${{ secrets.TLSNET_SIGNING_KEY_PASSWORD }}
+        run: |
+          printf '%s' "$TLSNET_KEYSTORE_BASE64" | base64 --decode > "$TLSNET_SIGNING_STORE_FILE"
+          ./scripts/build-android.sh --release
       - name: Collect Android APK
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          Copy-Item clients/android/app/build/outputs/apk/debug/app-debug.apk "dist/tlsnet-$version-android-debug.apk"
+          Copy-Item clients/android/app/build/outputs/apk/release/app-release.apk "dist/tlsnet-$version-android.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: tlsnet-packages

@@ -22,6 +22,11 @@ On Windows:
 The scripts first generate `app/libs/tlsnet.aar` with the repository-pinned
 `gomobile` tool, then build `app/build/outputs/apk/debug/app-debug.apk`.
 
+`./scripts/build-android.sh --release` builds a minified release APK when the four
+`TLSNET_SIGNING_*` environment variables are present. The repository Release workflow
+uses a persistent private signing key stored only in GitHub Actions Secrets, so its
+APK can be upgraded in place; the key and passwords are never committed.
+
 ## Use
 
 1. Install the APK and open TlsNet.

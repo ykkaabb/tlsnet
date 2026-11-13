@@ -12,6 +12,17 @@ go tool gomobile bind \
   -o clients/android/app/libs/tlsnet.aar \
   ./mobilecore
 
-if [[ "${1:-}" != "--skip-apk" ]]; then
-  gradle --no-daemon -p clients/android :app:assembleDebug
-fi
+case "${1:-}" in
+  --skip-apk)
+    ;;
+  --release)
+    gradle --no-daemon -p clients/android :app:assembleRelease
+    ;;
+  "")
+    gradle --no-daemon -p clients/android :app:assembleDebug
+    ;;
+  *)
+    echo "usage: $0 [--release|--skip-apk]" >&2
+    exit 2
+    ;;
+esac

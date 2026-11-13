@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipApk
+    [switch]$SkipApk,
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +17,16 @@ Push-Location $repository
 try {
     go tool gomobile init
     go tool gomobile bind -target=android -androidapi 26 -trimpath -o $aar ./mobilecore
-    if (-not $SkipApk) {
+    if ($Release) {
+        Push-Location (Join-Path $repository "clients\android")
+        try {
+            gradle --no-daemon :app:assembleRelease
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    elseif (-not $SkipApk) {
         Push-Location (Join-Path $repository "clients\android")
         try {
             gradle --no-daemon :app:assembleDebug
