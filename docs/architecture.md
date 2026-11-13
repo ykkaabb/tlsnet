@@ -28,6 +28,11 @@ ID contains the token. The relay temporarily admits that UDP endpoint, then pass
 the following packets unchanged to standard quic-go. Unknown UDP endpoints are
 forwarded through bounded NAT mappings to the configured UDP cover target.
 
+After admission, the transport performs a standard QUIC TLS 1.3 handshake and opens a
+real HTTP/3 POST request. Overlay packets use HTTP Datagrams (RFC 9297) associated
+with that request, so the application protocol is genuine HTTP/3 rather than a custom
+payload merely advertising the `h3` ALPN.
+
 This is a TLSNet camouflage design, not wire compatibility with Xray REALITY or
 Hysteria.
 

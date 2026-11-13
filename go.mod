@@ -1,10 +1,16 @@
 module github.com/ykkaabb/tlsnet
 
-go 1.24
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.5.0
-	golang.org/x/crypto v0.31.0
+	github.com/quic-go/quic-go v0.65.0
+	golang.org/x/crypto v0.54.0
 )
 
-require golang.org/x/sys v0.28.0 // indirect
+require (
+	github.com/quic-go/qpack v0.6.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
+)
