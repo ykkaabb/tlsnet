@@ -10,6 +10,21 @@ runs in that service. Subsequent GUI launches, configuration updates,
 connect/disconnect operations, status checks, and log viewing do not require an
 administrator token.
 
+The GUI keeps tunnel and service lifecycle operations separate:
+
+- **Disconnect tunnel** stops only the current virtual-network connection.
+- **Stop service** stops it until the next boot while retaining automatic startup.
+- **Disable startup** stops the service and changes it to manual startup; **Enable
+  startup** restores automatic startup and starts it immediately.
+- **Uninstall completely** removes the Windows service, installed application
+  copy, service configuration, logs, and the per-user control credentials. The
+  originally downloaded standalone executable remains so it can be deleted or
+  used for a new installation.
+
+Service lifecycle changes request administrator approval and are preceded by a
+separate confirmation inside TlsNet. This remains explicit even on Windows
+systems whose UAC policy automatically approves elevation for administrators.
+
 Service files are installed under `%ProgramFiles%\TlsNet`; protected runtime
 configuration and logs are stored under `%ProgramData%\TlsNet`. The per-user
 control token is stored under `%LOCALAPPDATA%\TlsNet` and authenticates the GUI

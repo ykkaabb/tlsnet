@@ -5,6 +5,7 @@ package windowsapp
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -26,6 +27,15 @@ func Main(arguments []string, version string) {
 			os.Exit(1)
 		}
 		messageBox("TlsNet", "安装完成，后台服务已经启动。以后直接打开 TlsNet 即可，不再需要管理员权限。", messageInfo)
+		return
+	}
+	if len(arguments) == 2 && strings.HasPrefix(arguments[1], "--service-") {
+		message, err := manageService(arguments[1])
+		if err != nil {
+			messageBox("TlsNet 服务操作失败", err.Error(), messageError)
+			os.Exit(1)
+		}
+		messageBox("TlsNet", message, messageInfo)
 		return
 	}
 	if err := runGUI(version); err != nil {

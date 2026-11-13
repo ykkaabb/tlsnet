@@ -91,14 +91,21 @@ func readLocalToken() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func installService(configPath, tokenPath string) error {
+func requireElevated() error {
 	token := windows.Token(0)
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
 		return err
 	}
 	defer token.Close()
 	if !token.IsElevated() {
-		return errors.New("installation requires administrator approval")
+		return errors.New("this operation requires administrator approval")
+	}
+	return nil
+}
+
+func installService(configPath, tokenPath string) error {
+	if err := requireElevated(); err != nil {
+		return err
 	}
 
 	configuration, err := os.ReadFile(configPath)
@@ -208,6 +215,12 @@ func installService(configPath, tokenPath string) error {
 		if err != nil {
 			return fmt.Errorf("create service: %w", err)
 		}
+	} else {
+		output, configureErr := exec.Command("sc.exe", "config", serviceName, "start=", "auto").CombinedOutput()
+		if configureErr != nil {
+			service.Close()
+			return fmt.Errorf("enable automatic startup: %w: %s", configureErr, strings.TrimSpace(string(output)))
+		}
 	}
 	defer service.Close()
 	if err := service.Start(); err != nil {
@@ -226,6 +239,133 @@ func installService(configPath, tokenPath string) error {
 	}
 	_ = os.Remove(configPath)
 	return nil
+}
+
+func stopWindowsService(service *mgr.Service) error {
+	status, err := service.Query()
+	if err != nil {
+		return fmt.Errorf("query service: %w", err)
+	}
+	if status.State == svc.Stopped {
+		return nil
+	}
+	if _, err := service.Control(svc.Stop); err != nil {
+		return fmt.Errorf("stop service: %w", err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err = service.Query()
+		if err != nil || status.State == svc.Stopped {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return errors.New("timed out waiting for the service to stop")
+}
+
+func configureServiceStart(mode string) error {
+	output, err := exec.Command("sc.exe", "config", serviceName, "start=", mode).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("configure service startup: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func manageService(action string) (string, error) {
+	if err := requireElevated(); err != nil {
+		return "", err
+	}
+	manager, err := mgr.Connect()
+	if err != nil {
+		return "", fmt.Errorf("connect service manager: %w", err)
+	}
+	defer manager.Disconnect()
+
+	service, openErr := manager.OpenService(serviceName)
+	if openErr != nil && action != "--service-uninstall" {
+		return "", errors.New("TlsNet service is not installed")
+	}
+
+	switch action {
+	case "--service-stop":
+		defer service.Close()
+		if err := stopWindowsService(service); err != nil {
+			return "", err
+		}
+		return "后台服务已停止。本次开机期间不会运行；自动启动仍然保留，下次开机会再次启动。", nil
+
+	case "--service-disable":
+		defer service.Close()
+		if err := stopWindowsService(service); err != nil {
+			return "", err
+		}
+		if err := configureServiceStart("demand"); err != nil {
+			return "", err
+		}
+		return "后台服务已停止，并已禁用开机自动启动。程序和配置均已保留。", nil
+
+	case "--service-enable":
+		defer service.Close()
+		if err := configureServiceStart("auto"); err != nil {
+			return "", err
+		}
+		status, queryErr := service.Query()
+		if queryErr != nil {
+			return "", fmt.Errorf("query service: %w", queryErr)
+		}
+		if status.State == svc.Stopped {
+			if err := service.Start(); err != nil {
+				return "", fmt.Errorf("start service: %w", err)
+			}
+		}
+		return "已启用开机自动启动，后台服务正在运行。", nil
+
+	case "--service-uninstall":
+		if service != nil {
+			if err := stopWindowsService(service); err != nil {
+				service.Close()
+				return "", err
+			}
+			if err := service.Delete(); err != nil {
+				service.Close()
+				return "", fmt.Errorf("delete service: %w", err)
+			}
+			service.Close()
+		}
+		_ = exec.Command("schtasks.exe", "/Delete", "/TN", serviceName, "/F").Run()
+
+		programFiles := os.Getenv("ProgramFiles")
+		if programFiles == "" {
+			return "", errors.New("ProgramFiles is not set")
+		}
+		dataDirectory, err := programDataDirectory()
+		if err != nil {
+			return "", err
+		}
+		localDirectory, err := localDataDirectory()
+		if err != nil {
+			return "", err
+		}
+		var removalErrors []string
+		for _, directory := range []string{
+			filepath.Join(programFiles, "TlsNet"),
+			dataDirectory,
+			localDirectory,
+		} {
+			if err := os.RemoveAll(directory); err != nil {
+				removalErrors = append(removalErrors, directory+": "+err.Error())
+			}
+		}
+		if len(removalErrors) > 0 {
+			return "", fmt.Errorf("service was removed, but some files could not be deleted:\n%s", strings.Join(removalErrors, "\n"))
+		}
+		return "TlsNet 后台服务、开机自启、虚拟网卡配置和本机配置数据均已删除。你下载到其他目录的安装程序可直接手动删除。", nil
+	default:
+		if service != nil {
+			service.Close()
+		}
+		return "", errors.New("unknown service operation")
+	}
 }
 
 func copyFile(source, destination string) error {
@@ -300,6 +440,22 @@ func launchElevated(configPath, tokenPath string) error {
 	verb, _ := windows.UTF16PtrFromString("runas")
 	file, _ := windows.UTF16PtrFromString(executable)
 	parameters, _ := windows.UTF16PtrFromString(fmt.Sprintf("--install %q %q", configPath, tokenPath))
+	directory, _ := windows.UTF16PtrFromString(filepath.Dir(executable))
+	err = windows.ShellExecute(0, verb, file, parameters, directory, windows.SW_SHOWNORMAL)
+	if err != nil {
+		return fmt.Errorf("administrator approval was cancelled or failed: %w", err)
+	}
+	return nil
+}
+
+func launchElevatedAction(action string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, _ := windows.UTF16PtrFromString(executable)
+	parameters, _ := windows.UTF16PtrFromString(action)
 	directory, _ := windows.UTF16PtrFromString(filepath.Dir(executable))
 	err = windows.ShellExecute(0, verb, file, parameters, directory, windows.SW_SHOWNORMAL)
 	if err != nil {

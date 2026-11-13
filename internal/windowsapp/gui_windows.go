@@ -81,10 +81,14 @@ const (
 	idPassword = 101
 	idNode     = 102
 	idStatus   = 103
-	idConnect  = 200
-	idStop     = 201
-	idRefresh  = 202
-	idLogs     = 203
+	idConnect        = 200
+	idStop           = 201
+	idRefresh        = 202
+	idLogs           = 203
+	idServiceStop    = 204
+	idServiceDisable = 205
+	idServiceEnable  = 206
+	idUninstall      = 207
 )
 
 type point struct {
@@ -134,7 +138,7 @@ func runGUI(version string) error {
 	title := fmt.Sprintf("TlsNet %s", version)
 	mainWindow, _, _ = procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(classPointer)), uintptr(unsafe.Pointer(utf16(title))), windowOverlapped,
-		0x80000000, 0x80000000, 680, 570, 0, 0, instance, 0,
+		0x80000000, 0x80000000, 680, 650, 0, 0, instance, 0,
 	)
 	if mainWindow == 0 {
 		return windows.GetLastError()
@@ -179,6 +183,30 @@ func windowProcedure(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 			} else if err := openTextInNotepad(contents); err != nil {
 				messageBox("TlsNet", err.Error(), messageError)
 			}
+		case idServiceStop:
+			runElevatedServiceAction(
+				"--service-stop",
+				"停止 TlsNet 后台服务",
+				"停止后，本次开机期间 TlsNet 不再运行；开机自启仍保留，下次开机会再次启动。\n\n是否继续？",
+			)
+		case idServiceDisable:
+			runElevatedServiceAction(
+				"--service-disable",
+				"禁用 TlsNet 开机自启",
+				"这会立即停止后台服务，并禁用开机自动启动。程序和配置会保留，之后可以在这里重新启用。\n\n是否继续？",
+			)
+		case idServiceEnable:
+			runElevatedServiceAction(
+				"--service-enable",
+				"启用 TlsNet 开机自启",
+				"这会启用开机自动启动，并立即启动后台服务。\n\n是否继续？",
+			)
+		case idUninstall:
+			runElevatedServiceAction(
+				"--service-uninstall",
+				"彻底卸载 TlsNet",
+				"这会停止并删除后台服务，同时删除 TlsNet 的程序副本、虚拟网卡配置、网络配置、日志和本机凭据。\n\n你单独下载的这个安装程序不会被删除。此操作不可撤销，是否继续？",
+			)
 		}
 		return 0
 	case wmClose:
@@ -202,10 +230,14 @@ func createControls(hwnd uintptr) {
 	passwordEdit = createControl("EDIT", "", windowChild|windowVisible|windowBorder|windowTabStop|editPassword, 135, 292, 500, 28, hwnd, idPassword, font)
 	statusLabel = createControl("STATIC", "状态：正在检查……", windowChild|windowVisible, 24, 345, 611, 58, hwnd, idStatus, font)
 	createControl("BUTTON", "安装 / 保存并连接", windowChild|windowVisible|windowTabStop|buttonDefault, 24, 420, 210, 38, hwnd, idConnect, font)
-	createControl("BUTTON", "断开", windowChild|windowVisible|windowTabStop, 250, 420, 110, 38, hwnd, idStop, font)
+	createControl("BUTTON", "断开隧道", windowChild|windowVisible|windowTabStop, 250, 420, 110, 38, hwnd, idStop, font)
 	createControl("BUTTON", "刷新状态", windowChild|windowVisible|windowTabStop, 375, 420, 120, 38, hwnd, idRefresh, font)
 	createControl("BUTTON", "查看日志", windowChild|windowVisible|windowTabStop, 510, 420, 125, 38, hwnd, idLogs, font)
-	createControl("STATIC", "首次安装会出现一次 UAC；之后本界面不需要管理员权限。", windowChild|windowVisible, 24, 480, 611, 28, hwnd, 0, font)
+	createControl("BUTTON", "停止服务", windowChild|windowVisible|windowTabStop, 24, 480, 140, 38, hwnd, idServiceStop, font)
+	createControl("BUTTON", "禁用自启", windowChild|windowVisible|windowTabStop, 181, 480, 140, 38, hwnd, idServiceDisable, font)
+	createControl("BUTTON", "启用自启", windowChild|windowVisible|windowTabStop, 338, 480, 140, 38, hwnd, idServiceEnable, font)
+	createControl("BUTTON", "彻底卸载", windowChild|windowVisible|windowTabStop, 495, 480, 140, 38, hwnd, idUninstall, font)
+	createControl("STATIC", "安装、服务管理和卸载会请求管理员权限；普通连接与查看状态不需要。", windowChild|windowVisible, 24, 545, 611, 40, hwnd, 0, font)
 }
 
 func createControl(class, text string, style uintptr, x, y, width, height int, parent uintptr, id uint16, font uintptr) uintptr {
@@ -274,6 +306,17 @@ func connectFromForm() {
 		return
 	}
 	setWindowText(statusLabel, "状态：等待管理员确认并安装后台服务；完成后点击“刷新状态”")
+}
+
+func runElevatedServiceAction(action, title, prompt string) {
+	if !confirmBox(title, prompt) {
+		return
+	}
+	if err := launchElevatedAction(action); err != nil {
+		messageBox("TlsNet", err.Error(), messageError)
+		return
+	}
+	setWindowText(statusLabel, "状态：系统正在执行服务操作；完成后点击“刷新状态”")
 }
 
 func refreshStatus() {
