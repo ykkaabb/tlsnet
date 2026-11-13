@@ -4,6 +4,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$repo/clients/android/app/libs"
 cd "$repo"
+go tool gomobile init
 go tool gomobile bind \
   -target=android \
   -androidapi 26 \

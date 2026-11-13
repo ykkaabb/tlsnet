@@ -14,6 +14,7 @@ New-Item -ItemType Directory -Path $libraryDirectory -Force | Out-Null
 
 Push-Location $repository
 try {
+    go tool gomobile init
     go tool gomobile bind -target=android -androidapi 26 -trimpath -o $aar ./mobilecore
     if (-not $SkipApk) {
         Push-Location (Join-Path $repository "clients\android")
