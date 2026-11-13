@@ -8,15 +8,23 @@ permissions:
   contents: read
 
 jobs:
-  go-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
-          cache-dependency-path: prototype/tlstun/go.mod
-      - name: Test prototype
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            go.sum
+            prototype/tlstun/go.mod
+      - name: Unit and race tests
+        run: go test -race ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: Legacy prototype tests
         run: go test ./prototype/tlstun
-      - name: Build Linux prototype
-        run: go build -o /tmp/tlstun-prototype ./prototype/tlstun
+      - name: Build Linux AMD64
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-linux-amd64 ./cmd/tlsnet
+      - name: Build Windows AMD64
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-windows-amd64.exe ./cmd/tlsnet
