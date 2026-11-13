@@ -107,6 +107,7 @@ type peer struct {
 	cancel    context.CancelFunc
 	incoming  chan wire.Frame
 	ordered   chan wire.Frame
+	stats     trafficStats
 }
 
 func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *slog.Logger) error {
@@ -286,6 +287,7 @@ func (r *relay) register(hello control.Hello, conn multipath.Lane) (*peer, contr
 	r.sessions[sessionID] = p
 	go (multipath.Reorderer{Wait: r.cfg.Transport.TLS.ReorderWait.Duration}).Run(peerContext, p.incoming, p.ordered)
 	go r.routePeer(p)
+	go reportTraffic(peerContext, r.logger, r.cfg.Logging.StatsInterval.Duration, "relay/"+p.node, &p.stats)
 	pool := netip.MustParsePrefix(r.cfg.Overlay.Pool)
 	welcome := control.Welcome{
 		Accepted: true, Address: netip.PrefixFrom(address, pool.Bits()).String(),
@@ -339,17 +341,26 @@ func (r *relay) routePeer(p *peer) {
 		case frame := <-p.ordered:
 			packet, err := overlay.ParsePacket(frame.Payload)
 			if err != nil || !r.routes.AllowsSource(p.node, packet.Source) {
+				p.stats.drop()
 				continue
 			}
+			p.stats.received(len(frame.Payload))
 			targetName, ok := r.routes.Lookup(packet.Target)
 			if !ok || targetName == p.node {
+				p.stats.drop()
 				continue
 			}
 			r.mu.RLock()
 			target := r.peers[targetName]
 			r.mu.RUnlock()
 			if target != nil {
-				_ = target.lanes.Write(wire.Frame{Type: wire.TypeData, Payload: frame.Payload})
+				if err := target.lanes.Write(wire.Frame{Type: wire.TypeData, Payload: frame.Payload}); err != nil {
+					target.stats.fail()
+				} else {
+					target.stats.sent(len(frame.Payload))
+				}
+			} else {
+				p.stats.drop()
 			}
 		}
 	}
@@ -589,6 +600,8 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 	incoming := make(chan wire.Frame, 1024)
 	ordered := make(chan wire.Frame, 1024)
 	failures := make(chan error, 1)
+	stats := &trafficStats{}
+	go reportTraffic(nodeContext, logger, cfg.Logging.StatsInterval.Duration, "node/"+cfg.Node.Name, stats)
 	go (multipath.Reorderer{Wait: cfg.Transport.TLS.ReorderWait.Duration}).Run(nodeContext, incoming, ordered)
 	go func() {
 		for {
@@ -613,6 +626,7 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 		for {
 			n, err := device.Read(buffer)
 			if err != nil {
+				stats.fail()
 				reportFailure(failures, err)
 				return
 			}
@@ -622,9 +636,11 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 				err = tunnel.Send(encoded)
 			}
 			if err != nil {
+				stats.fail()
 				reportFailure(failures, err)
 				return
 			}
+			stats.sent(n)
 		}
 	}()
 	for {
@@ -635,8 +651,10 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 			return err
 		case frame := <-ordered:
 			if _, err := device.Write(frame.Payload); err != nil {
+				stats.fail()
 				return err
 			}
+			stats.received(len(frame.Payload))
 		}
 	}
 }
@@ -713,6 +731,8 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 	incoming := make(chan wire.Frame, 1024)
 	ordered := make(chan wire.Frame, 1024)
 	failures := make(chan error, 1)
+	stats := &trafficStats{}
+	go reportTraffic(nodeContext, logger, cfg.Logging.StatsInterval.Duration, "node/"+cfg.Node.Name, stats)
 	go (multipath.Reorderer{Wait: cfg.Transport.TLS.ReorderWait.Duration}).Run(nodeContext, incoming, ordered)
 	for id, conn := range connections {
 		go readLane(nodeContext, id, conn, lanes, incoming, failures)
@@ -722,14 +742,17 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 		for {
 			n, err := device.Read(buffer)
 			if err != nil {
+				stats.fail()
 				reportFailure(failures, err)
 				return
 			}
 			packet := append([]byte(nil), buffer[:n]...)
 			if err := lanes.Write(wire.Frame{Type: wire.TypeData, Payload: packet}); err != nil {
+				stats.fail()
 				reportFailure(failures, err)
 				return
 			}
+			stats.sent(n)
 		}
 	}()
 	for {
@@ -740,8 +763,10 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 			return err
 		case frame := <-ordered:
 			if _, err := device.Write(frame.Payload); err != nil {
+				stats.fail()
 				return err
 			}
+			stats.received(len(frame.Payload))
 		}
 	}
 }
