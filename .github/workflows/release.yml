@@ -47,7 +47,10 @@ jobs:
             Copy-Item scripts/setup-linux.sh, scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination "$package/scripts"
             Copy-Item packaging/linux/tlsnet.service -Destination "$package/packaging/linux"
             chmod +x "$package/tlsnet" "$package/scripts/setup-linux.sh" "$package/scripts/install-linux.sh" "$package/scripts/uninstall-linux.sh"
-            tar -C $package -czf "dist/tlsnet-$version-linux-$architecture.tar.gz" .
+            # Archive named entries instead of `.` so extraction never attempts
+            # to chmod or retimestamp the caller's destination directory (for
+            # example the sticky, root-owned /tmp directory).
+            tar -C $package -czf "dist/tlsnet-$version-linux-$architecture.tar.gz" README.md configs packaging scripts tlsnet
           }
           New-Item -ItemType Directory -Force dist/windows-amd64 | Out-Null
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
