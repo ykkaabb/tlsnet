@@ -6,8 +6,30 @@ TlsNet is a hub-and-spoke IPv4 overlay. Every node connects outbound to one clou
 relay. Peers do not establish public P2P sessions. The first release supports one
 relay, one Linux subnet gateway, and multiple road-warrior clients.
 
-The public transport is TLS over TCP with a configurable SNI and multiple independent
-lanes. The overlay carries raw IPv4 packets; it is not an HTTP or SOCKS proxy.
+The public transport can use standard QUIC or TLS 1.3 over TCP with a configurable
+cover SNI. TCP uses multiple independent lanes. The overlay carries raw IP packets;
+it is not an HTTP or SOCKS proxy.
+
+## Camouflage admission
+
+Both public transports authenticate before exposing a TLSNet protocol response.
+All admission tokens are short-lived HMAC values derived from the configured password
+with Argon2id and domain-separated HKDF keys.
+
+For TCP, the token occupies the TLS ClientHello random field. A matching SNI and token
+select the local TLS 1.3 handler; any other syntactically valid ClientHello is relayed
+byte-for-byte to the configured TCP cover target.
+
+quic-go deliberately generates the client's Initial destination connection ID in an
+internal function, so its public connection-ID generator cannot embed an admission
+token there. TlsNet avoids a permanent quic-go fork: immediately before dialing, the
+client sends one 1200-byte QUIC-v1-shaped Initial probe whose destination connection
+ID contains the token. The relay temporarily admits that UDP endpoint, then passes
+the following packets unchanged to standard quic-go. Unknown UDP endpoints are
+forwarded through bounded NAT mappings to the configured UDP cover target.
+
+This is a TLSNet camouflage design, not wire compatibility with Xray REALITY or
+Hysteria.
 
 ## Components
 
