@@ -24,10 +24,10 @@ Home LAN (for example 192.168.3.0/24)
 
 ## 仓库状态
 
-项目目前已有可运行的 Linux TCP 单通道闭环：中继分配地址、严格授权子网
-发布、最长前缀转发、源地址校验、Linux TUN 和网关 NAT。TCP 伪装入口及
-QUIC 授权门卫均已实现；QUIC 数据面、多 TLS 通道调度、Windows 和 Android
-尚未接入，因此还不能替代生产中的 EasyTier。
+项目目前已有可运行的 Linux 多 TLS 通道闭环：中继分配地址、严格授权子网
+发布、最长前缀转发、源地址校验、Linux TUN、网关 NAT、故障通道剔除和
+有界乱序恢复。TCP 伪装入口及 QUIC 授权门卫均已实现；QUIC 数据面、
+自动重连、Windows 和 Android 尚未接入，因此还不能替代生产中的 EasyTier。
 
 计划中的首个完整版本包含：
 

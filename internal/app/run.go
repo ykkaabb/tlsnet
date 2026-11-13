@@ -11,12 +11,12 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ykkaabb/tlsnet/internal/auth"
 	"github.com/ykkaabb/tlsnet/internal/config"
 	"github.com/ykkaabb/tlsnet/internal/control"
+	"github.com/ykkaabb/tlsnet/internal/multipath"
 	"github.com/ykkaabb/tlsnet/internal/overlay"
 	"github.com/ykkaabb/tlsnet/internal/transport/tlsreality"
 	"github.com/ykkaabb/tlsnet/internal/tun"
@@ -53,13 +53,18 @@ type relay struct {
 	fallback  *tlsreality.Fallback
 	mu        sync.RWMutex
 	peers     map[string]*peer
+	sessions  map[string]*peer
 }
 
 type peer struct {
-	node    string
-	address netip.Addr
-	conn    net.Conn
-	sendMu  sync.Mutex
+	node      string
+	sessionID string
+	address   netip.Addr
+	lanes     *multipath.Set
+	ctx       context.Context
+	cancel    context.CancelFunc
+	incoming  chan wire.Frame
+	ordered   chan wire.Frame
 }
 
 func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *slog.Logger) error {
@@ -87,7 +92,7 @@ func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *
 	}()
 	hub := &relay{
 		cfg: cfg, keys: keys, logger: logger, tlsConfig: tlsConfig, allocator: allocator,
-		routes: overlay.NewRouteTable(), peers: make(map[string]*peer),
+		routes: overlay.NewRouteTable(), peers: make(map[string]*peer), sessions: make(map[string]*peer),
 		fallback: &tlsreality.Fallback{
 			Target: cfg.Reality.TCPTarget, DialTimeout: 5 * time.Second,
 			MaxLifetime: cfg.Reality.FallbackMaxLifetime.Duration,
@@ -130,40 +135,40 @@ func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.Ser
 		return
 	}
 	var hello control.Hello
-	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil || hello.Lane != 0 {
+	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil {
 		return
 	}
-	p, welcome, err := r.register(hello, conn)
+	var p *peer
+	var welcome control.Welcome
+	if hello.Lane == 0 {
+		p, welcome, err = r.register(hello, conn)
+	} else {
+		p, welcome, err = r.attach(hello, conn)
+	}
 	if err != nil {
 		_ = sendWelcome(conn, control.Welcome{Accepted: false, Error: err.Error()})
 		return
 	}
-	defer r.unregister(p)
+	defer r.detach(p, hello.Lane)
 	if err := sendWelcome(conn, welcome); err != nil {
 		return
 	}
-	r.logger.Info("node connected", "node", p.node, "address", p.address)
+	if hello.Lane == 0 {
+		r.logger.Info("node connected", "node", p.node, "address", p.address)
+	} else {
+		r.logger.Info("transport lane joined", "node", p.node, "lane", hello.Lane)
+	}
 	for {
 		frame, err := wire.ReadFrame(conn)
 		if err != nil {
 			return
 		}
-		if frame.Type != wire.TypeData {
-			continue
-		}
-		packet, err := overlay.ParsePacket(frame.Payload)
-		if err != nil || !r.routes.AllowsSource(p.node, packet.Source) {
-			continue
-		}
-		targetName, ok := r.routes.Lookup(packet.Target)
-		if !ok || targetName == p.node {
-			continue
-		}
-		r.mu.RLock()
-		target := r.peers[targetName]
-		r.mu.RUnlock()
-		if target != nil {
-			_ = target.send(frame)
+		if frame.Type == wire.TypeData {
+			select {
+			case p.incoming <- frame:
+			case <-p.ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -200,34 +205,91 @@ func (r *relay) register(hello control.Hello, conn net.Conn) (*peer, control.Wel
 		r.allocator.Release(hello.Node)
 		return nil, control.Welcome{}, err
 	}
-	p := &peer{node: hello.Node, address: address, conn: conn}
-	r.peers[hello.Node] = p
 	session := make([]byte, 16)
 	_, _ = rand.Read(session)
+	sessionID := base64.RawURLEncoding.EncodeToString(session)
+	peerContext, cancel := context.WithCancel(context.Background())
+	p := &peer{
+		node: hello.Node, sessionID: sessionID, address: address, lanes: multipath.NewSet(),
+		ctx: peerContext, cancel: cancel, incoming: make(chan wire.Frame, 1024), ordered: make(chan wire.Frame, 1024),
+	}
+	if err := p.lanes.Add(0, conn); err != nil {
+		cancel()
+		r.routes.RemovePeer(hello.Node)
+		r.allocator.Release(hello.Node)
+		return nil, control.Welcome{}, err
+	}
+	r.peers[hello.Node] = p
+	r.sessions[sessionID] = p
+	go (multipath.Reorderer{Wait: r.cfg.Transport.TLS.ReorderWait.Duration}).Run(peerContext, p.incoming, p.ordered)
+	go r.routePeer(p)
 	pool := netip.MustParsePrefix(r.cfg.Overlay.Pool)
 	welcome := control.Welcome{
 		Accepted: true, Address: netip.PrefixFrom(address, pool.Bits()).String(),
 		Routes: r.cfg.Overlay.AcceptRoutes, MTU: r.cfg.Overlay.MTU,
-		SessionID: base64.RawURLEncoding.EncodeToString(session),
+		SessionID: sessionID,
 	}
 	return p, welcome, nil
 }
 
-func (r *relay) unregister(p *peer) {
+func (r *relay) attach(hello control.Hello, conn net.Conn) (*peer, control.Welcome, error) {
 	r.mu.Lock()
-	if r.peers[p.node] == p {
-		delete(r.peers, p.node)
+	defer r.mu.Unlock()
+	p := r.sessions[hello.SessionID]
+	if p == nil || p.node != hello.Node {
+		return nil, control.Welcome{}, errors.New("unknown transport session")
 	}
+	if err := p.lanes.Add(hello.Lane, conn); err != nil {
+		return nil, control.Welcome{}, err
+	}
+	pool := netip.MustParsePrefix(r.cfg.Overlay.Pool)
+	return p, control.Welcome{
+		Accepted: true, Address: netip.PrefixFrom(p.address, pool.Bits()).String(),
+		MTU: r.cfg.Overlay.MTU, SessionID: p.sessionID,
+	}, nil
+}
+
+func (r *relay) detach(p *peer, lane int) {
+	p.lanes.Remove(lane)
+	if p.lanes.Len() != 0 {
+		return
+	}
+	r.mu.Lock()
+	if r.peers[p.node] != p {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.peers, p.node)
+	delete(r.sessions, p.sessionID)
 	r.mu.Unlock()
+	p.cancel()
 	r.routes.RemovePeer(p.node)
 	r.allocator.Release(p.node)
 	r.logger.Info("node disconnected", "node", p.node)
 }
 
-func (p *peer) send(frame wire.Frame) error {
-	p.sendMu.Lock()
-	defer p.sendMu.Unlock()
-	return wire.WriteFrame(p.conn, frame)
+func (r *relay) routePeer(p *peer) {
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case frame := <-p.ordered:
+			packet, err := overlay.ParsePacket(frame.Payload)
+			if err != nil || !r.routes.AllowsSource(p.node, packet.Source) {
+				continue
+			}
+			targetName, ok := r.routes.Lookup(packet.Target)
+			if !ok || targetName == p.node {
+				continue
+			}
+			r.mu.RLock()
+			target := r.peers[targetName]
+			r.mu.RUnlock()
+			if target != nil {
+				_ = target.lanes.Write(wire.Frame{Type: wire.TypeData, Payload: frame.Payload})
+			}
+		}
+	}
 }
 
 func sendWelcome(conn net.Conn, welcome control.Welcome) error {
@@ -239,51 +301,34 @@ func sendWelcome(conn net.Conn, welcome control.Welcome) error {
 }
 
 func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *slog.Logger) error {
-	raw, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", cfg.Server.Address)
-	if err != nil {
-		return err
-	}
-	defer raw.Close()
-	tuneTCP(raw)
-	cancelWatch := make(chan struct{})
-	defer close(cancelWatch)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = raw.Close()
-		case <-cancelWatch:
-		}
-	}()
-	conn, err := tlsreality.Client(raw, tlsreality.ClientOptions{
-		ServerName: cfg.Reality.ServerName, Keys: keys, TimeWindow: cfg.Reality.TimeWindow.Duration,
-	})
-	if err != nil {
-		return err
-	}
-	if err := conn.HandshakeContext(ctx); err != nil {
-		return err
-	}
 	hello := control.Hello{
 		Node: cfg.Node.Name, Role: cfg.Node.Role, RequestedAddress: cfg.Overlay.Address,
 		AdvertiseRoutes: cfg.Overlay.AdvertiseRoutes, Lane: 0,
 	}
-	payload, err := control.Encode(hello)
+	primary, welcome, err := dialLane(ctx, cfg, keys, hello)
 	if err != nil {
 		return err
 	}
-	if err := wire.WriteFrame(conn, wire.Frame{Type: wire.TypeClientHello, Payload: payload}); err != nil {
+	lanes := multipath.NewSet()
+	defer lanes.Close()
+	if err := lanes.Add(0, primary); err != nil {
 		return err
 	}
-	frame, err := wire.ReadFrame(conn)
-	if err != nil || frame.Type != wire.TypeServerHello {
-		return fmt.Errorf("read relay welcome: %w", err)
-	}
-	var welcome control.Welcome
-	if err := control.Decode(frame.Payload, &welcome); err != nil {
-		return err
-	}
-	if !welcome.Accepted {
-		return errors.New(welcome.Error)
+	connections := map[int]net.Conn{0: primary}
+	for lane := 1; lane < cfg.Transport.TLS.Lanes; lane++ {
+		laneHello := hello
+		laneHello.Lane = lane
+		laneHello.SessionID = welcome.SessionID
+		conn, _, err := dialLane(ctx, cfg, keys, laneHello)
+		if err != nil {
+			logger.Warn("transport lane failed to join", "lane", lane, "error", err)
+			continue
+		}
+		if err := lanes.Add(lane, conn); err != nil {
+			_ = conn.Close()
+			continue
+		}
+		connections[lane] = conn
 	}
 	routes := cfg.Overlay.AcceptRoutes
 	device, err := tun.Open(tun.Config{Name: cfg.Overlay.Name, Address: welcome.Address, MTU: welcome.MTU, Routes: routes})
@@ -300,40 +345,115 @@ func runNode(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *s
 		defer cleanup()
 		logger.Info("gateway NAT enabled", "lan_interface", cfg.Gateway.LANInterface, "source", assigned)
 	}
-	logger.Info("overlay ready", "interface", device.Name(), "address", welcome.Address, "transport", "tls")
+	logger.Info("overlay ready", "interface", device.Name(), "address", welcome.Address, "transport", "tls-multipath", "lanes", lanes.Len())
 
-	var sequence atomic.Uint64
-	writeErrors := make(chan error, 1)
+	nodeContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	incoming := make(chan wire.Frame, 1024)
+	ordered := make(chan wire.Frame, 1024)
+	failures := make(chan error, 1)
+	go (multipath.Reorderer{Wait: cfg.Transport.TLS.ReorderWait.Duration}).Run(nodeContext, incoming, ordered)
+	for id, conn := range connections {
+		go readLane(nodeContext, id, conn, lanes, incoming, failures)
+	}
 	go func() {
 		buffer := make([]byte, 65535)
 		for {
 			n, err := device.Read(buffer)
 			if err != nil {
-				writeErrors <- err
+				reportFailure(failures, err)
 				return
 			}
 			packet := append([]byte(nil), buffer[:n]...)
-			if err := wire.WriteFrame(conn, wire.Frame{Type: wire.TypeData, Sequence: sequence.Add(1), Payload: packet}); err != nil {
-				writeErrors <- err
+			if err := lanes.Write(wire.Frame{Type: wire.TypeData, Payload: packet}); err != nil {
+				reportFailure(failures, err)
 				return
 			}
 		}
 	}()
 	for {
-		frame, err := wire.ReadFrame(conn)
-		if err != nil {
-			select {
-			case writeErr := <-writeErrors:
-				return writeErr
-			default:
-				return err
-			}
-		}
-		if frame.Type == wire.TypeData {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-failures:
+			return err
+		case frame := <-ordered:
 			if _, err := device.Write(frame.Payload); err != nil {
 				return err
 			}
 		}
+	}
+}
+
+func dialLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello control.Hello) (net.Conn, control.Welcome, error) {
+	raw, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", cfg.Server.Address)
+	if err != nil {
+		return nil, control.Welcome{}, err
+	}
+	tuneTCP(raw)
+	conn, err := tlsreality.Client(raw, tlsreality.ClientOptions{
+		ServerName: cfg.Reality.ServerName, Keys: keys, TimeWindow: cfg.Reality.TimeWindow.Duration,
+	})
+	if err != nil {
+		_ = raw.Close()
+		return nil, control.Welcome{}, err
+	}
+	if err := conn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, control.Welcome{}, err
+	}
+	payload, err := control.Encode(hello)
+	if err != nil {
+		_ = conn.Close()
+		return nil, control.Welcome{}, err
+	}
+	if err := wire.WriteFrame(conn, wire.Frame{Type: wire.TypeClientHello, Payload: payload}); err != nil {
+		_ = conn.Close()
+		return nil, control.Welcome{}, err
+	}
+	frame, err := wire.ReadFrame(conn)
+	if err != nil || frame.Type != wire.TypeServerHello {
+		_ = conn.Close()
+		return nil, control.Welcome{}, fmt.Errorf("read relay welcome: %w", err)
+	}
+	var welcome control.Welcome
+	if err := control.Decode(frame.Payload, &welcome); err != nil {
+		_ = conn.Close()
+		return nil, control.Welcome{}, err
+	}
+	if !welcome.Accepted {
+		_ = conn.Close()
+		return nil, control.Welcome{}, errors.New(welcome.Error)
+	}
+	return conn, welcome, nil
+}
+
+func readLane(ctx context.Context, id int, conn net.Conn, lanes *multipath.Set, output chan<- wire.Frame, failures chan<- error) {
+	defer func() {
+		lanes.Remove(id)
+		if lanes.Len() == 0 && ctx.Err() == nil {
+			reportFailure(failures, multipath.ErrNoHealthyLane)
+		}
+	}()
+	for {
+		frame, err := wire.ReadFrame(conn)
+		if err != nil {
+			return
+		}
+		if frame.Type == wire.TypeData {
+			select {
+			case output <- frame:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func reportFailure(target chan<- error, err error) {
+	select {
+	case target <- err:
+	default:
 	}
 }
 
