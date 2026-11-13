@@ -11,8 +11,12 @@ usage() {
 
 binary=$(readlink -f "$1")
 config=$(readlink -f "$2")
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$script_dir/.." && pwd)
 unit="$root/packaging/linux/tlsnet.service"
+if [[ ! -f "$unit" ]]; then
+  unit="$script_dir/tlsnet.service"
+fi
 
 [[ -x "$binary" ]] || { echo "binary is missing or not executable: $binary" >&2; exit 1; }
 [[ -f "$config" ]] || { echo "configuration is missing: $config" >&2; exit 1; }

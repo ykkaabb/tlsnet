@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: go.sum
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Install Android SDK and NDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Build packages
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          New-Item -ItemType Directory -Force dist/linux-amd64, dist/windows-amd64 | Out-Null
+          $env:CGO_ENABLED = '0'
+          $env:GOOS = 'linux'; $env:GOARCH = 'amd64'
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/linux-amd64/tlsnet ./cmd/tlsnet
+          Copy-Item README.md, configs/relay.example.toml, configs/gateway.example.toml, configs/client.example.toml, scripts/install-linux.sh, scripts/uninstall-linux.sh, packaging/linux/tlsnet.service -Destination dist/linux-amd64
+          $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/windows-amd64/tlsnet.exe ./cmd/tlsnet
+          ./scripts/get-wintun.ps1 -Destination dist/windows-amd64
+          Copy-Item README.md, configs/client.example.toml, scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64
+          tar -C dist/linux-amd64 -czf "dist/tlsnet-$version-linux-amd64.tar.gz" .
+          Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/tlsnet-$version-windows-amd64.zip"
+      - name: Build Android APK
+        run: ./scripts/build-android.sh
+      - name: Collect Android APK
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          Copy-Item clients/android/app/build/outputs/apk/debug/app-debug.apk "dist/tlsnet-$version-android-debug.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlsnet-packages
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.apk
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk --generate-notes
