@@ -67,14 +67,10 @@ curl -fsSL https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-boo
 Linux 访问客户端使用 `client`。服务器生成的 join code 不含密码，家庭网关和
 客户端粘贴 join code 后再分别输入相同密码。
 
-Windows 客户端请用管理员身份打开 PowerShell，然后执行：
-
-```powershell
-irm https://github.com/ykkaabb/tlsnet/releases/latest/download/tlsnet-bootstrap.ps1 | iex
-```
-
-它会自动下载最新版 Windows 包、验证 SHA-256，并进入客户端配置向导；无需
-手动下载或解压 Release 包。
+Windows 客户端直接从 Release 下载 `tlsnet-*-windows-amd64.exe` 并双击运行。
+图形界面中填写 join code、节点名和密码即可。首次连接会请求一次 UAC，用于
+安装内置的 Wintun 驱动和 TlsNet 后台服务；之后打开界面、连接、断开、修改配置
+和查看日志均不需要管理员权限，也不再执行 PowerShell 安装脚本。
 
 ### 本地构建与离线安装
 
@@ -102,12 +98,7 @@ sudo ./scripts/setup-linux.sh relay
 
 家中 Linux/fnOS 运行 `sudo ./scripts/setup-linux.sh gateway`，粘贴 join code、
 确认自动识别的 LAN 网卡并输入相同密码。Linux 访问端运行
-`sudo ./scripts/setup-linux.sh client`。Windows 在管理员 PowerShell 中运行：
-
-```powershell
-.\scripts\setup-windows.ps1
-```
-
+`sudo ./scripts/setup-linux.sh client`。Windows 使用 Release 中的原生图形程序，
 粘贴 join code 并输入密码。Android 点击
 **Import join code**，只填写 join code、节点名和密码。整个流程不需要手写 TOML。
 云防火墙仍需同时放行向导所选端口的 TCP 和 UDP。
@@ -117,7 +108,7 @@ sudo ./scripts/setup-linux.sh relay
 `/etc/tlsnet/config.toml`。卸载时运行 `sudo ./scripts/uninstall-linux.sh`；
 加 `--purge` 才会删除配置。
 
-Windows 的构建、Wintun 和开机启动步骤见
+Windows 图形程序、后台服务和 Wintun 的说明见
 [`clients/windows/README.md`](clients/windows/README.md)，Android APK 的构建与使用见
 [`clients/android/README.md`](clients/android/README.md)。每次 CI 都生成可安装的
 Android debug APK；版本标签会同时生成 Linux、Windows 和 Android 发布包。

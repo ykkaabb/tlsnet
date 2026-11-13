@@ -49,14 +49,13 @@ jobs:
             chmod +x "$package/tlsnet" "$package/scripts/setup-linux.sh" "$package/scripts/install-linux.sh" "$package/scripts/uninstall-linux.sh"
             tar -C $package -czf "dist/tlsnet-$version-linux-$architecture.tar.gz" .
           }
-          New-Item -ItemType Directory -Force dist/windows-amd64/scripts, dist/windows-amd64/configs, dist/windows-amd64/clients/windows | Out-Null
+          New-Item -ItemType Directory -Force dist/windows-amd64 | Out-Null
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
-          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/windows-amd64/tlsnet.exe ./cmd/tlsnet
-          ./scripts/get-wintun.ps1 -Destination dist/windows-amd64
+          ./scripts/get-wintun.ps1 -Destination internal/windowsapp/assets
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version" -o dist/windows-amd64/TlsNet.exe ./cmd/tlsnet-windows
           Copy-Item README.md -Destination dist/windows-amd64
-          Copy-Item configs/client.example.toml -Destination dist/windows-amd64/configs
-          Copy-Item scripts/setup-windows.ps1, scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64/scripts
-          Copy-Item clients/windows/README.md -Destination dist/windows-amd64/clients/windows
+          Copy-Item internal/windowsapp/assets/WINTUN-LICENSE.txt -Destination dist/windows-amd64
+          Copy-Item dist/windows-amd64/TlsNet.exe -Destination "dist/tlsnet-$version-windows-amd64.exe"
           Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/tlsnet-$version-windows-amd64.zip"
       - name: Build Android APK
         env:
@@ -76,22 +75,21 @@ jobs:
       - name: Generate checksums and bootstrap
         run: |
           cp scripts/bootstrap-linux.sh dist/tlsnet-bootstrap.sh
-          cp scripts/bootstrap-windows.ps1 dist/tlsnet-bootstrap.ps1
           chmod +x dist/tlsnet-bootstrap.sh
           cd dist
-          sha256sum *.tar.gz *.zip *.apk tlsnet-bootstrap.sh tlsnet-bootstrap.ps1 > SHA256SUMS
+          sha256sum *.tar.gz *.zip *.exe *.apk tlsnet-bootstrap.sh > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: tlsnet-packages
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.exe
             dist/*.apk
             dist/SHA256SUMS
             dist/tlsnet-bootstrap.sh
-            dist/tlsnet-bootstrap.ps1
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.apk dist/SHA256SUMS dist/tlsnet-bootstrap.sh dist/tlsnet-bootstrap.ps1 --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.exe dist/*.apk dist/SHA256SUMS dist/tlsnet-bootstrap.sh --generate-notes

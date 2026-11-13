@@ -48,8 +48,17 @@ jobs:
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-linux-amd64 ./cmd/tlsnet
       - name: Build Linux ARM64
         run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-linux-arm64 ./cmd/tlsnet
+      - name: Prepare embedded Wintun
+        shell: pwsh
+        run: ./scripts/get-wintun.ps1 -Destination internal/windowsapp/assets
       - name: Build Windows AMD64
-        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-windows-amd64.exe ./cmd/tlsnet
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/tlsnet-windows-amd64.exe ./cmd/tlsnet
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui" -o /tmp/TlsNet.exe ./cmd/tlsnet-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlsnet-windows-native
+          path: /tmp/TlsNet.exe
 
   android:
     runs-on: ubuntu-latest
