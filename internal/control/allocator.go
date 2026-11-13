@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -27,10 +28,12 @@ func NewAllocator(pool netip.Prefix, reserved ...netip.Addr) (*Allocator, error)
 		byAddr:   make(map[netip.Addr]string),
 	}
 	a.reserved[pool.Addr()] = struct{}{}
-	last := pool.Addr()
-	for next := last.Next(); pool.Contains(next); next = next.Next() {
-		last = next
-	}
+	encoded := pool.Addr().As4()
+	base := uint64(binary.BigEndian.Uint32(encoded[:]))
+	lastValue := base | (uint64(1)<<(32-pool.Bits()) - 1)
+	var lastBytes [4]byte
+	binary.BigEndian.PutUint32(lastBytes[:], uint32(lastValue))
+	last := netip.AddrFrom4(lastBytes)
 	a.reserved[last] = struct{}{}
 	for _, address := range reserved {
 		if address.IsValid() {

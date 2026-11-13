@@ -59,7 +59,6 @@ type Reality struct {
 	ServerName             string   `toml:"server_name"`
 	TCPTarget              string   `toml:"tcp_target"`
 	UDPTarget              string   `toml:"udp_target"`
-	ClientFingerprint      string   `toml:"client_fingerprint"`
 	TimeWindow             Duration `toml:"time_window"`
 	FallbackMaxPerIP       int      `toml:"fallback_max_connections_per_ip"`
 	FallbackMaxConnections int      `toml:"fallback_max_connections"`
@@ -160,9 +159,6 @@ func (c *Config) defaults() {
 	}
 	if c.Listen.UDP == "" {
 		c.Listen.UDP = "0.0.0.0:443"
-	}
-	if c.Reality.ClientFingerprint == "" {
-		c.Reality.ClientFingerprint = "chrome"
 	}
 	defaultDuration(&c.Reality.TimeWindow, time.Minute)
 	if c.Reality.FallbackMaxPerIP == 0 {
@@ -294,14 +290,35 @@ func (c *Config) Validate() error {
 	if c.Overlay.MTU < 576 || c.Overlay.MTU > 9000 {
 		return errors.New("overlay.mtu must be 576..9000")
 	}
+	switch c.Logging.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		return errors.New("logging.level must be debug, info, warn, or error")
+	}
+	if c.Logging.StatsInterval.Duration <= 0 {
+		return errors.New("logging.stats_interval must be positive")
+	}
 	if c.Overlay.Address != "" && c.Overlay.Address != "auto" {
 		if _, err := netip.ParsePrefix(c.Overlay.Address); err != nil {
 			return fmt.Errorf("overlay.address: %w", err)
 		}
 	}
 	if c.Node.Role == "relay" {
-		if _, err := netip.ParsePrefix(c.Overlay.Pool); err != nil {
+		pool, err := netip.ParsePrefix(c.Overlay.Pool)
+		if err != nil {
 			return fmt.Errorf("overlay.pool: %w", err)
+		}
+		if !pool.Addr().Is4() || pool.Bits() > 30 {
+			return errors.New("overlay.pool must be an IPv4 prefix of /30 or larger")
+		}
+		pool = pool.Masked()
+		relayAddress, err := netip.ParsePrefix(c.Overlay.Address)
+		if err != nil || !relayAddress.Addr().Is4() {
+			return errors.New("relay overlay.address must be a concrete IPv4 prefix")
+		}
+		if relayAddress.Bits() != pool.Bits() || !pool.Contains(relayAddress.Addr()) ||
+			relayAddress.Addr() == pool.Addr() || !pool.Contains(relayAddress.Addr().Next()) {
+			return errors.New("relay overlay.address must be a usable address inside overlay.pool with the same prefix length")
 		}
 		for node, routes := range c.Relay.AllowedRoutes {
 			if strings.TrimSpace(node) == "" {

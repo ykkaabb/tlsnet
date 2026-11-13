@@ -23,7 +23,6 @@ home = ["192.168.3.0/24"]
 server_name = "www.speedtest.cn"
 tcp_target = "www.speedtest.cn:443"
 udp_target = "www.speedtest.cn:443"
-client_fingerprint = "chrome"
 time_window = "1m"
 fallback_max_connections_per_ip = 4
 fallback_max_connections = 128

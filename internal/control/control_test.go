@@ -62,3 +62,14 @@ func TestAllocatorReservationAndReuse(t *testing.T) {
 		t.Fatalf("address was not reusable: %s, %v", second, err)
 	}
 }
+
+func TestAllocatorHandlesLargePoolWithoutScanningIt(t *testing.T) {
+	allocator, err := NewAllocator(netip.MustParsePrefix("10.0.0.0/8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, err := allocator.Allocate("first", netip.Addr{})
+	if err != nil || address.String() != "10.0.0.1" {
+		t.Fatalf("address=%s err=%v", address, err)
+	}
+}

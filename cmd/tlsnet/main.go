@@ -47,9 +47,9 @@ func execute(arguments []string) error {
 	if arguments[0] != "run" {
 		return fmt.Errorf("unknown command %q", arguments[0])
 	}
-	level := slog.LevelInfo
-	if cfg.Logging.Level == "debug" {
-		level = slog.LevelDebug
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
+		return fmt.Errorf("logging level: %w", err)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

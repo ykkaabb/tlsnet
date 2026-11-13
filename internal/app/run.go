@@ -86,16 +86,19 @@ func deriveKeys(cfg *config.Config) (*auth.Keys, error) {
 }
 
 type relay struct {
-	cfg       *config.Config
-	keys      *auth.Keys
-	logger    *slog.Logger
-	tlsConfig *tls.Config
-	allocator *control.Allocator
-	routes    *overlay.RouteTable
-	fallback  *tlsreality.Fallback
-	mu        sync.RWMutex
-	peers     map[string]*peer
-	sessions  map[string]*peer
+	cfg        *config.Config
+	keys       *auth.Keys
+	logger     *slog.Logger
+	tlsConfig  *tls.Config
+	allocator  *control.Allocator
+	routes     *overlay.RouteTable
+	fallback   *tlsreality.Fallback
+	mu         sync.RWMutex
+	peers      map[string]*peer
+	sessions   map[string]*peer
+	device     tun.Device
+	address    netip.Addr
+	localStats trafficStats
 }
 
 type peer struct {
@@ -136,6 +139,36 @@ func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *
 			MaxTotal:    cfg.Reality.FallbackMaxConnections, MaxPerIP: cfg.Reality.FallbackMaxPerIP,
 		},
 	}
+	localRoutes := make([]string, 0)
+	seenRoutes := make(map[string]struct{})
+	for _, routes := range cfg.Relay.AllowedRoutes {
+		for _, route := range routes {
+			prefix := netip.MustParsePrefix(route).Masked().String()
+			if _, exists := seenRoutes[prefix]; !exists {
+				seenRoutes[prefix] = struct{}{}
+				localRoutes = append(localRoutes, prefix)
+			}
+		}
+	}
+	for _, route := range cfg.Overlay.AcceptRoutes {
+		prefix := netip.MustParsePrefix(route).Masked().String()
+		if _, exists := seenRoutes[prefix]; !exists {
+			seenRoutes[prefix] = struct{}{}
+			localRoutes = append(localRoutes, prefix)
+		}
+	}
+	device, err := tun.Open(tun.Config{
+		Name: cfg.Overlay.Name, Address: cfg.Overlay.Address, MTU: cfg.Overlay.MTU, Routes: localRoutes,
+	})
+	if err != nil {
+		return fmt.Errorf("open relay TUN: %w", err)
+	}
+	defer device.Close()
+	hub.device = device
+	hub.address = relayPrefix.Addr()
+	go hub.routeLocal(ctx)
+	go reportTraffic(ctx, logger, cfg.Logging.StatsInterval.Duration, "relay/local", &hub.localStats)
+	logger.Info("relay overlay ready", "interface", device.Name(), "address", cfg.Overlay.Address, "routes", localRoutes)
 	quicErrors := make(chan error, 1)
 	if cfg.Transport.QUIC.Enabled && cfg.Transport.Mode != "tls-multipath" {
 		go func() {
@@ -347,6 +380,14 @@ func (r *relay) routePeer(p *peer) {
 			}
 			p.stats.received(len(frame.Payload))
 			targetName, ok := r.routes.Lookup(packet.Target)
+			if packet.Target == r.address && r.device != nil {
+				if _, err := r.device.Write(frame.Payload); err != nil {
+					r.localStats.fail()
+				} else {
+					r.localStats.received(len(frame.Payload))
+				}
+				continue
+			}
 			if !ok || targetName == p.node {
 				p.stats.drop()
 				continue
@@ -364,6 +405,43 @@ func (r *relay) routePeer(p *peer) {
 				p.stats.drop()
 			}
 		}
+	}
+}
+
+func (r *relay) routeLocal(ctx context.Context) {
+	buffer := make([]byte, 65535)
+	for {
+		n, err := r.device.Read(buffer)
+		if err != nil {
+			if ctx.Err() == nil {
+				r.logger.Error("relay TUN stopped", "error", err)
+				r.localStats.fail()
+			}
+			return
+		}
+		packetBytes := append([]byte(nil), buffer[:n]...)
+		packet, err := overlay.ParsePacket(packetBytes)
+		if err != nil || packet.Source != r.address {
+			r.localStats.drop()
+			continue
+		}
+		targetName, ok := r.routes.Lookup(packet.Target)
+		if !ok {
+			r.localStats.drop()
+			continue
+		}
+		r.mu.RLock()
+		target := r.peers[targetName]
+		r.mu.RUnlock()
+		if target == nil {
+			r.localStats.drop()
+			continue
+		}
+		if err := target.lanes.Write(wire.Frame{Type: wire.TypeData, Payload: packetBytes}); err != nil {
+			r.localStats.fail()
+			continue
+		}
+		r.localStats.sent(n)
 	}
 }
 
