@@ -80,3 +80,33 @@ func TestCertificateProof(t *testing.T) {
 		t.Fatal("certificate verified for wrong cover name")
 	}
 }
+
+func TestCertificateManagerRotatesBeforeExpiry(t *testing.T) {
+	keys := testKeys(t, "password")
+	now := time.Unix(1_800_000_000, 0)
+	current := now
+	manager, err := NewCertificateManager(
+		"www.speedtest.cn", keys.Certificate[:], 6*time.Hour, time.Hour,
+		func() time.Time { return current },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.GetCertificate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = now.Add(4 * time.Hour)
+	same, err := manager.GetCertificate(nil)
+	if err != nil || same != first {
+		t.Fatal("certificate rotated too early")
+	}
+	current = now.Add(5*time.Hour + time.Minute)
+	rotated, err := manager.GetCertificate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated == first {
+		t.Fatal("certificate did not rotate before expiry")
+	}
+}

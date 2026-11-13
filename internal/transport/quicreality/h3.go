@@ -3,7 +3,6 @@ package quicreality
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -173,16 +172,16 @@ func ServerTLSConfig(options H3Options) (*tls.Config, error) {
 	if options.Now != nil {
 		now = options.Now
 	}
-	certificate, err := auth.NewServerCertificate(options.ServerName, options.Keys.Certificate[:], now(), 6*time.Hour, rand.Reader)
+	manager, err := auth.NewCertificateManager(
+		options.ServerName, options.Keys.Certificate[:], 6*time.Hour, time.Hour, now,
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{http3.NextProtoH3},
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{certificate.DER}, PrivateKey: certificate.PrivateKey, Leaf: certificate.Parsed,
-		}},
+		MinVersion:     tls.VersionTLS13,
+		NextProtos:     []string{http3.NextProtoH3},
+		GetCertificate: manager.GetCertificate,
 	}, nil
 }
 

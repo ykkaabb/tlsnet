@@ -71,18 +71,16 @@ func ServerConfig(options ServerOptions) (*tls.Config, error) {
 	if options.Lifetime <= 0 {
 		options.Lifetime = 6 * time.Hour
 	}
-	certificate, err := auth.NewServerCertificate(options.ServerName, options.Keys.Certificate[:], now(), options.Lifetime, rand.Reader)
+	manager, err := auth.NewCertificateManager(
+		options.ServerName, options.Keys.Certificate[:], options.Lifetime, options.Lifetime/6, now,
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{ALPN},
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{certificate.DER},
-			PrivateKey:  certificate.PrivateKey,
-			Leaf:        certificate.Parsed,
-		}},
+		MinVersion:     tls.VersionTLS13,
+		NextProtos:     []string{ALPN},
+		GetCertificate: manager.GetCertificate,
 	}, nil
 }
 
