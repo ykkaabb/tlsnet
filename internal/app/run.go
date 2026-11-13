@@ -274,9 +274,6 @@ func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.Ser
 func (r *relay) register(hello control.Hello, conn multipath.Lane) (*peer, control.Welcome, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.peers[hello.Node]; exists {
-		return nil, control.Welcome{}, errors.New("node is already connected")
-	}
 	allowed := make(map[netip.Prefix]struct{})
 	for _, route := range r.cfg.Relay.AllowedRoutes[hello.Node] {
 		allowed[netip.MustParsePrefix(route).Masked()] = struct{}{}
@@ -286,6 +283,19 @@ func (r *relay) register(hello control.Hello, conn multipath.Lane) (*peer, contr
 		if _, ok := allowed[prefix]; !ok {
 			return nil, control.Welcome{}, fmt.Errorf("node %q is not allowed to advertise %s", hello.Node, prefix)
 		}
+	}
+	// An authenticated reconnect with the same node identity supersedes the old
+	// session. This is important after client upgrades, crashes, and NAT changes:
+	// QUIC/HTTP3 teardown can otherwise arrive after the replacement connection.
+	// Remove the old routing state before allocating the replacement address.
+	if previous := r.peers[hello.Node]; previous != nil {
+		delete(r.peers, previous.node)
+		delete(r.sessions, previous.sessionID)
+		previous.cancel()
+		_ = previous.lanes.Close()
+		r.routes.RemovePeer(previous.node)
+		r.allocator.Release(previous.node)
+		r.logger.Info("node session replaced", "node", previous.node)
 	}
 	var requested netip.Addr
 	if hello.RequestedAddress != "" && hello.RequestedAddress != "auto" {
@@ -618,6 +628,7 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 	if err != nil {
 		return err
 	}
+	defer packetConn.Close()
 	server, err := net.ResolveUDPAddr("udp", cfg.Server.Address)
 	if err != nil {
 		_ = packetConn.Close()

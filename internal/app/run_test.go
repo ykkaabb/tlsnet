@@ -122,6 +122,44 @@ func TestRelayKeepsSessionUntilLastLaneLeaves(t *testing.T) {
 	}
 }
 
+func TestRelayReconnectReplacesStaleSession(t *testing.T) {
+	hub := testRelay(t)
+	oldServer, oldClient := net.Pipe()
+	defer oldClient.Close()
+	oldPeer, oldWelcome, err := hub.register(control.Hello{
+		Node: "home", Role: "gateway", RequestedAddress: "10.91.0.2/24",
+		AdvertiseRoutes: []string{"192.168.3.0/24"},
+	}, oldServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newServer, newClient := net.Pipe()
+	defer newClient.Close()
+	newPeer, newWelcome, err := hub.register(control.Hello{
+		Node: "home", Role: "gateway", RequestedAddress: "10.91.0.2/24",
+		AdvertiseRoutes: []string{"192.168.3.0/24"},
+	}, newServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newPeer == oldPeer || newWelcome.SessionID == oldWelcome.SessionID {
+		t.Fatal("replacement reused the stale session")
+	}
+	if hub.peers["home"] != newPeer || hub.sessions[newWelcome.SessionID] != newPeer {
+		t.Fatal("replacement session was not registered")
+	}
+	if hub.sessions[oldWelcome.SessionID] != nil || oldPeer.lanes.Len() != 0 {
+		t.Fatal("stale session was not removed")
+	}
+	select {
+	case <-oldPeer.ctx.Done():
+	default:
+		t.Fatal("stale peer context was not cancelled")
+	}
+	hub.detach(newPeer, 0)
+}
+
 func TestRelayRejectsUnauthorizedAdvertisedRoute(t *testing.T) {
 	hub := testRelay(t)
 	server, client := net.Pipe()

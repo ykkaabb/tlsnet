@@ -121,6 +121,9 @@ Android debug APK；版本标签会同时生成 Linux、Windows 和 Android 发�
 `"tls-multipath"` 仅使用多 TLS/TCP，`"auto"` 优先 QUIC 并在建连失败时
 回退到多 TLS。中继可以在同一数字端口上同时监听 TCP 和 UDP。
 
+同一节点在升级、崩溃或 NAT 切换后重新连接时，经过鉴权的新会话会原子替换
+服务端残留的旧会话；客户端也会在每次 QUIC 重试后释放临时 UDP socket。
+
 `reality.server_name` 不要求以任何固定文字开头。它决定 TLS SNI、密钥派生上下文
 和未授权连接的固定回落目标；三端必须完全一致。TlsNet 的设计借鉴 REALITY 的
 “认证流量进入隧道、其他流量回落”的思路，但不与 Xray REALITY 或 Hysteria 线缆
