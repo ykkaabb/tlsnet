@@ -34,6 +34,7 @@ var (
 	procDestroyWindow      = user32.NewProc("DestroyWindow")
 	procSendMessageW       = user32.NewProc("SendMessageW")
 	procSetWindowTextW     = user32.NewProc("SetWindowTextW")
+	procEnableWindow      = user32.NewProc("EnableWindow")
 	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
 	procGetWindowTextLenW  = user32.NewProc("GetWindowTextLengthW")
 	procMessageBoxW        = user32.NewProc("MessageBoxW")
@@ -45,6 +46,11 @@ var (
 	passwordEdit    uintptr
 	nodeEdit        uintptr
 	statusLabel     uintptr
+	saveButton      uintptr
+	startButton     uintptr
+	stopButton      uintptr
+	logsButton      uintptr
+	serviceNeedsUpgrade bool
 )
 
 const (
@@ -81,7 +87,7 @@ const (
 	idPassword = 101
 	idNode     = 102
 	idStatus   = 103
-	idConnect        = 200
+	idSave           = 200
 	idStop           = 201
 	idRefresh        = 202
 	idLogs           = 203
@@ -89,6 +95,7 @@ const (
 	idServiceDisable = 205
 	idServiceEnable  = 206
 	idUninstall      = 207
+	idStart          = 208
 )
 
 type point struct {
@@ -145,6 +152,7 @@ func runGUI(version string) error {
 	}
 	procShowWindow.Call(mainWindow, showNormal)
 	procUpdateWindow.Call(mainWindow)
+	loadFormState()
 	refreshStatus()
 	var current message
 	for {
@@ -167,8 +175,17 @@ func windowProcedure(hwnd uintptr, message uint32, wParam, lParam uintptr) uintp
 		return 0
 	case wmCommand:
 		switch uint16(wParam & 0xffff) {
-		case idConnect:
-			connectFromForm()
+		case idSave:
+			if serviceNeedsUpgrade {
+				upgradeInstalledService()
+			} else {
+				saveConfigurationFromForm()
+			}
+		case idStart:
+			if _, err := controlRequest("POST", "/start", nil); err != nil {
+				messageBox("TlsNet", err.Error(), messageError)
+			}
+			refreshStatus()
 		case idStop:
 			if _, err := controlRequest("POST", "/stop", nil); err != nil {
 				messageBox("TlsNet", err.Error(), messageError)
@@ -229,10 +246,11 @@ func createControls(hwnd uintptr) {
 	createControl("STATIC", "网络密码", windowChild|windowVisible, 24, 296, 110, 24, hwnd, 0, font)
 	passwordEdit = createControl("EDIT", "", windowChild|windowVisible|windowBorder|windowTabStop|editPassword, 135, 292, 500, 28, hwnd, idPassword, font)
 	statusLabel = createControl("STATIC", "状态：正在检查……", windowChild|windowVisible, 24, 345, 611, 58, hwnd, idStatus, font)
-	createControl("BUTTON", "安装 / 保存并连接", windowChild|windowVisible|windowTabStop|buttonDefault, 24, 420, 210, 38, hwnd, idConnect, font)
-	createControl("BUTTON", "断开隧道", windowChild|windowVisible|windowTabStop, 250, 420, 110, 38, hwnd, idStop, font)
-	createControl("BUTTON", "刷新状态", windowChild|windowVisible|windowTabStop, 375, 420, 120, 38, hwnd, idRefresh, font)
-	createControl("BUTTON", "查看日志", windowChild|windowVisible|windowTabStop, 510, 420, 125, 38, hwnd, idLogs, font)
+	saveButton = createControl("BUTTON", "安装并连接", windowChild|windowVisible|windowTabStop|buttonDefault, 24, 420, 150, 38, hwnd, idSave, font)
+	startButton = createControl("BUTTON", "连接隧道", windowChild|windowVisible|windowTabStop, 186, 420, 100, 38, hwnd, idStart, font)
+	stopButton = createControl("BUTTON", "断开隧道", windowChild|windowVisible|windowTabStop, 298, 420, 100, 38, hwnd, idStop, font)
+	createControl("BUTTON", "刷新状态", windowChild|windowVisible|windowTabStop, 410, 420, 100, 38, hwnd, idRefresh, font)
+	logsButton = createControl("BUTTON", "查看日志", windowChild|windowVisible|windowTabStop, 522, 420, 113, 38, hwnd, idLogs, font)
 	createControl("BUTTON", "停止服务", windowChild|windowVisible|windowTabStop, 24, 480, 140, 38, hwnd, idServiceStop, font)
 	createControl("BUTTON", "禁用自启", windowChild|windowVisible|windowTabStop, 181, 480, 140, 38, hwnd, idServiceDisable, font)
 	createControl("BUTTON", "启用自启", windowChild|windowVisible|windowTabStop, 338, 480, 140, 38, hwnd, idServiceEnable, font)
@@ -249,7 +267,7 @@ func createControl(class, text string, style uintptr, x, y, width, height int, p
 	return handle
 }
 
-func connectFromForm() {
+func saveConfigurationFromForm() {
 	node := strings.TrimSpace(windowText(nodeEdit))
 	joinText := strings.TrimSpace(windowText(joinEdit))
 	password := windowText(passwordEdit)
@@ -272,12 +290,17 @@ func connectFromForm() {
 		messageBox("TlsNet", err.Error(), messageError)
 		return
 	}
+	if err := saveFormState(guiFormState{Node: node, JoinCode: joinText, Password: password}); err != nil {
+		messageBox("TlsNet", "保存界面配置失败：\n"+err.Error(), messageError)
+		return
+	}
 	if _, err := controlRequest("GET", "/status", nil); err == nil {
 		if _, err := controlRequest("POST", "/config", bytes.NewReader(encoded)); err != nil {
 			messageBox("TlsNet", err.Error(), messageError)
 			return
 		}
-		setWindowText(statusLabel, "状态：配置已保存，正在连接")
+		setWindowText(statusLabel, "状态：配置已保存")
+		refreshStatus()
 		return
 	}
 	_, tokenPath, err := ensureLocalToken()
@@ -305,6 +328,9 @@ func connectFromForm() {
 		messageBox("TlsNet", err.Error(), messageError)
 		return
 	}
+	enableControl(saveButton, false)
+	enableControl(startButton, false)
+	enableControl(stopButton, false)
 	setWindowText(statusLabel, "状态：等待管理员确认并安装后台服务；完成后点击“刷新状态”")
 }
 
@@ -319,10 +345,34 @@ func runElevatedServiceAction(action, title, prompt string) {
 	setWindowText(statusLabel, "状态：系统正在执行服务操作；完成后点击“刷新状态”")
 }
 
+func upgradeInstalledService() {
+	if !confirmBox(
+		"升级 TlsNet 后台服务",
+		"将使用当前程序覆盖旧后台服务，同时保留现有网络配置、密码、控制端口和开机自启设置。\n\n是否继续？",
+	) {
+		return
+	}
+	if err := launchElevatedAction("--upgrade"); err != nil {
+		messageBox("TlsNet", err.Error(), messageError)
+		return
+	}
+	enableControl(saveButton, false)
+	enableControl(startButton, false)
+	enableControl(stopButton, false)
+	setWindowText(statusLabel, "状态：正在升级后台服务；完成后点击“刷新状态”")
+}
+
 func refreshStatus() {
+	previouslyNeededUpgrade := serviceNeedsUpgrade
 	data, err := controlRequest("GET", "/status", nil)
 	if err != nil {
+		serviceNeedsUpgrade = false
 		setWindowText(statusLabel, "状态：尚未安装，或后台服务未运行")
+		setWindowText(saveButton, "安装并连接")
+		enableControl(saveButton, true)
+		enableControl(startButton, false)
+		enableControl(stopButton, false)
+		enableControl(logsButton, false)
 		return
 	}
 	var status statusResponse
@@ -330,11 +380,156 @@ func refreshStatus() {
 		setWindowText(statusLabel, "状态：后台服务响应异常")
 		return
 	}
+	serviceNeedsUpgrade = status.Version == "" || status.Version != applicationVersion
+	if serviceNeedsUpgrade {
+		setWindowText(saveButton, "升级并保留配置")
+	} else {
+		setWindowText(saveButton, "保存配置")
+		if previouslyNeededUpgrade && strings.TrimSpace(windowText(joinEdit)) == "" {
+			loadFormState()
+		}
+	}
+	enableControl(saveButton, true)
+	enableControl(logsButton, true)
+	enableControl(startButton, status.Tunnel != "running")
+	enableControl(stopButton, status.Tunnel == "running")
 	text := "状态：服务已运行；隧道=" + status.Tunnel
 	if status.LastError != "" {
 		text += "；错误=" + status.LastError
 	}
 	setWindowText(statusLabel, text)
+}
+
+type guiFormState struct {
+	Node     string `json:"node"`
+	JoinCode string `json:"join_code"`
+	Password string `json:"password"`
+}
+
+func loadFormState() {
+	if state, err := readFormState(); err == nil {
+		applyFormState(state)
+		return
+	}
+	var encoded []byte
+	if data, err := controlRequest("GET", "/config", nil); err == nil {
+		encoded = data
+	} else if directory, dirErr := localDataDirectory(); dirErr == nil {
+		encoded, _ = os.ReadFile(filepath.Join(directory, "pending.toml"))
+	}
+	if len(encoded) == 0 {
+		return
+	}
+	cfg, err := config.Parse(encoded)
+	if err != nil || cfg.Node.Role != "client" {
+		return
+	}
+	joinCode, err := joinCodeFromClientConfig(cfg)
+	if err != nil {
+		return
+	}
+	state := guiFormState{Node: cfg.Node.Name, JoinCode: joinCode, Password: cfg.Auth.Password}
+	applyFormState(state)
+	_ = saveFormState(state)
+}
+
+func applyFormState(state guiFormState) {
+	if strings.TrimSpace(state.Node) != "" {
+		setWindowText(nodeEdit, state.Node)
+	}
+	setWindowText(joinEdit, state.JoinCode)
+	setWindowText(passwordEdit, state.Password)
+}
+
+func joinCodeFromClientConfig(cfg *config.Config) (string, error) {
+	pool := strings.TrimSpace(cfg.Overlay.Pool)
+	homeSubnet := ""
+	for _, route := range cfg.Overlay.AcceptRoutes {
+		if strings.TrimSpace(route) != "" && route != pool {
+			homeSubnet = route
+			break
+		}
+	}
+	if pool == "" || homeSubnet == "" {
+		return "", fmt.Errorf("installed configuration does not contain reusable join routes")
+	}
+	return (enroll.JoinCode{
+		ServerAddress: cfg.Server.Address,
+		NetworkName:   cfg.Auth.NetworkName,
+		ServerName:    cfg.Reality.ServerName,
+		OverlayPool:   pool,
+		HomeNode:      "home",
+		HomeSubnet:    homeSubnet,
+	}).Encode()
+}
+
+func saveFormState(state guiFormState) error {
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	protected, err := protectUserData(encoded)
+	if err != nil {
+		return err
+	}
+	directory, err := localDataDirectory()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	return replaceFile(filepath.Join(directory, "form.dat"), protected, 0o600)
+}
+
+func readFormState() (guiFormState, error) {
+	directory, err := localDataDirectory()
+	if err != nil {
+		return guiFormState{}, err
+	}
+	protected, err := os.ReadFile(filepath.Join(directory, "form.dat"))
+	if err != nil {
+		return guiFormState{}, err
+	}
+	encoded, err := unprotectUserData(protected)
+	if err != nil {
+		return guiFormState{}, err
+	}
+	var state guiFormState
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		return guiFormState{}, err
+	}
+	return state, nil
+}
+
+func protectUserData(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	input := windows.DataBlob{Size: uint32(len(data)), Data: &data[0]}
+	var output windows.DataBlob
+	if err := windows.CryptProtectData(&input, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output); err != nil {
+		return nil, err
+	}
+	defer windows.LocalFree(windows.Handle(unsafe.Pointer(output.Data)))
+	return append([]byte(nil), unsafe.Slice(output.Data, int(output.Size))...), nil
+}
+
+func unprotectUserData(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	input := windows.DataBlob{Size: uint32(len(data)), Data: &data[0]}
+	var output windows.DataBlob
+	var description *uint16
+	if err := windows.CryptUnprotectData(&input, &description, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output); err != nil {
+		return nil, err
+	}
+	if description != nil {
+		defer windows.LocalFree(windows.Handle(unsafe.Pointer(description)))
+	}
+	defer windows.LocalFree(windows.Handle(unsafe.Pointer(output.Data)))
+	return append([]byte(nil), unsafe.Slice(output.Data, int(output.Size))...), nil
 }
 
 func windowText(handle uintptr) string {
@@ -346,6 +541,14 @@ func windowText(handle uintptr) string {
 
 func setWindowText(handle uintptr, value string) {
 	procSetWindowTextW.Call(handle, uintptr(unsafe.Pointer(utf16(value))))
+}
+
+func enableControl(handle uintptr, enabled bool) {
+	value := uintptr(0)
+	if enabled {
+		value = 1
+	}
+	procEnableWindow.Call(handle, value)
 }
 
 func utf16(value string) *uint16 {

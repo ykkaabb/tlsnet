@@ -10,8 +10,17 @@ runs in that service. Subsequent GUI launches, configuration updates,
 connect/disconnect operations, status checks, and log viewing do not require an
 administrator token.
 
-The GUI keeps tunnel and service lifecycle operations separate:
+The GUI restores the node name, exact join code, and password when it is opened
+again. The form state is encrypted for the current Windows user with DPAPI; the
+service configuration remains protected under ProgramData. When upgrading from
+an older native GUI, **Upgrade and keep configuration** replaces only the
+service binary and then imports the existing configuration into the form.
 
+Configuration, tunnel, and service lifecycle operations are separate:
+
+- **Save configuration** validates and stores edits. It reconnects only when the
+  tunnel was already running.
+- **Connect tunnel** starts a saved, stopped tunnel without re-entering anything.
 - **Disconnect tunnel** stops only the current virtual-network connection.
 - **Stop service** stops it until the next boot while retaining automatic startup.
 - **Disable startup** stops the service and changes it to manual startup; **Enable

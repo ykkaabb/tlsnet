@@ -27,6 +27,8 @@ const (
 	fallbackControlPort = 24831
 )
 
+var applicationVersion = "dev"
+
 type serviceHandler struct{}
 
 type tunnelController struct {
@@ -40,6 +42,7 @@ type tunnelController struct {
 }
 
 type statusResponse struct {
+	Version   string `json:"version"`
 	Service   string `json:"service"`
 	Tunnel    string `json:"tunnel"`
 	LastError string `json:"last_error,omitempty"`
@@ -120,6 +123,15 @@ func controlHandler(controller *tunnelController, token, dataDirectory string) h
 	mux.HandleFunc("GET /status", authorized(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, controller.status())
 	}))
+	mux.HandleFunc("GET /config", authorized(func(writer http.ResponseWriter, _ *http.Request) {
+		contents, err := os.ReadFile(filepath.Join(dataDirectory, "config.toml"))
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusNotFound)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/toml; charset=utf-8")
+		_, _ = writer.Write(contents)
+	}))
 	mux.HandleFunc("POST /start", authorized(func(writer http.ResponseWriter, _ *http.Request) {
 		if err := controller.start(); err != nil {
 			http.Error(writer, err.Error(), http.StatusBadRequest)
@@ -145,10 +157,13 @@ func controlHandler(controller *tunnelController, token, dataDirectory string) h
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		controller.stop()
-		if err := controller.start(); err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
+		wasRunning := controller.status().Tunnel == "running"
+		if wasRunning {
+			controller.stop()
+			if err := controller.start(); err != nil {
+				http.Error(writer, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		writeJSON(writer, controller.status())
 	}))
@@ -247,7 +262,7 @@ func (controller *tunnelController) stop() {
 func (controller *tunnelController) status() statusResponse {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	result := statusResponse{Service: "running", Tunnel: "stopped", LastError: controller.lastError}
+	result := statusResponse{Version: applicationVersion, Service: "running", Tunnel: "stopped", LastError: controller.lastError}
 	if controller.running {
 		result.Tunnel = "running"
 		result.StartedAt = controller.startedAt.Format(time.RFC3339)

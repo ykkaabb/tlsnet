@@ -103,7 +103,7 @@ func requireElevated() error {
 	return nil
 }
 
-func installService(configPath, tokenPath string) error {
+func installService(configPath, tokenPath string, removePending, forceAutomatic bool) error {
 	if err := requireElevated(); err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func installService(configPath, tokenPath string) error {
 		if err != nil {
 			return fmt.Errorf("create service: %w", err)
 		}
-	} else {
+	} else if forceAutomatic {
 		output, configureErr := exec.Command("sc.exe", "config", serviceName, "start=", "auto").CombinedOutput()
 		if configureErr != nil {
 			service.Close()
@@ -244,8 +244,26 @@ func installService(configPath, tokenPath string) error {
 	if healthErr != nil {
 		return fmt.Errorf("service started but health check failed: %w", healthErr)
 	}
-	_ = os.Remove(configPath)
+	if removePending {
+		_ = os.Remove(configPath)
+	}
 	return nil
+}
+
+func upgradeService() error {
+	if err := requireElevated(); err != nil {
+		return err
+	}
+	dataDirectory, err := programDataDirectory()
+	if err != nil {
+		return err
+	}
+	return installService(
+		filepath.Join(dataDirectory, "config.toml"),
+		filepath.Join(dataDirectory, "control.token"),
+		false,
+		false,
+	)
 }
 
 func stopWindowsService(service *mgr.Service) error {

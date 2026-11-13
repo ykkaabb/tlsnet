@@ -11,6 +11,7 @@ import (
 )
 
 func Main(arguments []string, version string) {
+	applicationVersion = version
 	if len(arguments) > 1 && arguments[1] == "service" {
 		if err := runService(); err != nil {
 			os.Exit(1)
@@ -22,11 +23,19 @@ func Main(arguments []string, version string) {
 			messageBox("TlsNet 安装失败", "安装参数不完整。", messageError)
 			os.Exit(2)
 		}
-		if err := installService(arguments[2], arguments[3]); err != nil {
+		if err := installService(arguments[2], arguments[3], true, true); err != nil {
 			messageBox("TlsNet 安装失败", err.Error(), messageError)
 			os.Exit(1)
 		}
 		messageBox("TlsNet", "安装完成，后台服务已经启动。以后直接打开 TlsNet 即可，不再需要管理员权限。", messageInfo)
+		return
+	}
+	if len(arguments) == 2 && arguments[1] == "--upgrade" {
+		if err := upgradeService(); err != nil {
+			messageBox("TlsNet 升级失败", err.Error(), messageError)
+			os.Exit(1)
+		}
+		messageBox("TlsNet", "后台服务升级完成，现有配置已经保留。返回主窗口后点击“刷新状态”。", messageInfo)
 		return
 	}
 	if len(arguments) == 2 && strings.HasPrefix(arguments[1], "--service-") {
