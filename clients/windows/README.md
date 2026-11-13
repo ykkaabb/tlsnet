@@ -2,6 +2,16 @@
 
 TlsNet uses the official WireGuard TUN package and the signed Wintun driver.
 
+For an extracted release package, open PowerShell as Administrator and run:
+
+```powershell
+.\scripts\setup-windows.ps1
+```
+
+Choose `client`, paste the relay's password-free join code, and enter the shared
+network password. The wizard generates and validates the TOML, installs Wintun and
+TlsNet, and starts the elevated startup task automatically.
+
 Build and assemble an AMD64 directory from an elevated PowerShell:
 
 ```powershell

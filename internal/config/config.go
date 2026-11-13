@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -123,6 +124,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	return Parse(data)
+}
+
+func Encode(cfg *Config) ([]byte, error) {
+	if cfg == nil {
+		return nil, errors.New("configuration is required")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	if err := toml.NewEncoder(&output).Encode(cfg); err != nil {
+		return nil, fmt.Errorf("encode TOML: %w", err)
+	}
+	return output.Bytes(), nil
 }
 
 func Parse(data []byte) (*Config, error) {

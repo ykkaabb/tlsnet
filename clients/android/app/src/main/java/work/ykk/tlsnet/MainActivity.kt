@@ -2,6 +2,7 @@ package work.ykk.tlsnet
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -12,6 +13,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import mobilecore.Mobilecore
 
 class MainActivity : Activity() {
     private lateinit var editor: EditText
@@ -42,6 +44,10 @@ class MainActivity : Activity() {
             setText(loadConfiguration())
         }
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val importButton = Button(this).apply {
+            text = "Import join code"
+            setOnClickListener { showJoinDialog() }
+        }
         val connect = Button(this).apply {
             text = getString(R.string.connect)
             setOnClickListener { requestConnect() }
@@ -58,11 +64,54 @@ class MainActivity : Activity() {
         buttons.addView(connect, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         buttons.addView(disconnect, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(status)
+        root.addView(importButton)
         root.addView(editor, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
         ))
         root.addView(buttons)
         setContentView(root)
+    }
+
+    private fun showJoinDialog() {
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 8, 32, 0)
+        }
+        val joinCode = EditText(this).apply {
+            hint = "TLSNET1: join code"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val node = EditText(this).apply {
+            hint = "Node name"
+            setText("android")
+        }
+        val password = EditText(this).apply {
+            hint = "Network password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        fields.addView(joinCode)
+        fields.addView(node)
+        fields.addView(password)
+        AlertDialog.Builder(this)
+            .setTitle("Import TlsNet network")
+            .setView(fields)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Import") { _, _ ->
+                try {
+                    val generated = Mobilecore.clientConfig(
+                        joinCode.text.toString(), node.text.toString(), password.text.toString(),
+                    )
+                    editor.setText(generated)
+                    getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+                        .putString(CONFIG_KEY, generated).apply()
+                    status.text = "Configuration imported"
+                } catch (error: Throwable) {
+                    Toast.makeText(
+                        this, error.message ?: "Invalid join code", Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+            .show()
     }
 
     private fun requestConnect() {

@@ -30,7 +30,7 @@ APK can be upgraded in place; the key and passwords are never committed.
 ## Use
 
 1. Install the APK and open TlsNet.
-2. Edit the TOML configuration. Use a unique Android node name.
+2. Tap **Import join code**, paste the relay's code, and enter the same password.
 3. Tap **Connect** and approve the Android VPN prompt.
 4. Keep the persistent notification enabled; its action disconnects the tunnel.
 

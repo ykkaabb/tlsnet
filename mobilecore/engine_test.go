@@ -35,6 +35,21 @@ func TestNewEngineValidatesSplitRoutes(t *testing.T) {
 	}
 }
 
+func TestClientConfigFromJoinCode(t *testing.T) {
+	code := "TLSNET1:eyJzZXJ2ZXIiOiIxMjQuMjIzLjIxOS42MTo0NDMiLCJuZXR3b3JrIjoidGxzbmV0Iiwic25pIjoid3d3LnNwZWVkdGVzdC5jbiIsInBvb2wiOiIxMC45MS4wLjAvMjQiLCJob21lX25vZGUiOiJob21lIiwiaG9tZV9zdWJuZXQiOiIxOTIuMTY4LjMuMC8yNCJ9"
+	generated, err := ClientConfig(code, "phone", "password with spaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := NewEngine(generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.config.Node.Name != "phone" || engine.config.Auth.Password != "password with spaces" {
+		t.Fatalf("unexpected generated config: %+v", engine.config)
+	}
+}
+
 func TestPacketPumps(t *testing.T) {
 	session := &fakePacketSession{receive: [][]byte{[]byte("from-overlay")}}
 	sendResult := make(chan error, 1)

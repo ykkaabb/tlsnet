@@ -43,15 +43,15 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/linux-amd64/tlsnet ./cmd/tlsnet
           Copy-Item README.md -Destination dist/linux-amd64
           Copy-Item configs/*.toml -Destination dist/linux-amd64/configs
-          Copy-Item scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination dist/linux-amd64/scripts
+          Copy-Item scripts/setup-linux.sh, scripts/install-linux.sh, scripts/uninstall-linux.sh -Destination dist/linux-amd64/scripts
           Copy-Item packaging/linux/tlsnet.service -Destination dist/linux-amd64/packaging/linux
-          chmod +x dist/linux-amd64/tlsnet dist/linux-amd64/scripts/install-linux.sh dist/linux-amd64/scripts/uninstall-linux.sh
+          chmod +x dist/linux-amd64/tlsnet dist/linux-amd64/scripts/setup-linux.sh dist/linux-amd64/scripts/install-linux.sh dist/linux-amd64/scripts/uninstall-linux.sh
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/windows-amd64/tlsnet.exe ./cmd/tlsnet
           ./scripts/get-wintun.ps1 -Destination dist/windows-amd64
           Copy-Item README.md -Destination dist/windows-amd64
           Copy-Item configs/client.example.toml -Destination dist/windows-amd64/configs
-          Copy-Item scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64/scripts
+          Copy-Item scripts/setup-windows.ps1, scripts/install-windows.ps1, scripts/uninstall-windows.ps1 -Destination dist/windows-amd64/scripts
           Copy-Item clients/windows/README.md -Destination dist/windows-amd64/clients/windows
           tar -C dist/linux-amd64 -czf "dist/tlsnet-$version-linux-amd64.tar.gz" .
           Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/tlsnet-$version-windows-amd64.zip"
