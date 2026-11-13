@@ -34,6 +34,41 @@ func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	if cfg.Node.Role == "relay" {
 		return runRelay(ctx, cfg, keys, logger)
 	}
+	return runNodeLoop(ctx, cfg, keys, logger)
+}
+
+func runNodeLoop(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *slog.Logger) error {
+	backoff := time.Second
+	for {
+		started := time.Now()
+		err := runNodeAttempt(ctx, cfg, keys, logger)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			err = errors.New("transport stopped without an error")
+		}
+		if time.Since(started) >= time.Minute {
+			backoff = time.Second
+		}
+		logger.Warn("overlay disconnected; reconnecting", "error", err, "after", backoff)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+}
+
+func runNodeAttempt(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *slog.Logger) error {
 	if cfg.Transport.QUIC.Enabled && cfg.Transport.Mode != "tls-multipath" {
 		err := runNodeH3(ctx, cfg, keys, logger)
 		if err == nil || ctx.Err() != nil || cfg.Transport.Mode == "quic" || !cfg.Transport.TLS.Enabled {
@@ -103,7 +138,11 @@ func runRelay(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger *
 	quicErrors := make(chan error, 1)
 	if cfg.Transport.QUIC.Enabled && cfg.Transport.Mode != "tls-multipath" {
 		go func() {
-			quicErrors <- hub.runQUIC(ctx)
+			err := hub.runQUIC(ctx)
+			if err != nil && ctx.Err() == nil {
+				logger.Error("QUIC relay stopped", "error", err)
+			}
+			quicErrors <- err
 		}()
 	}
 	if !cfg.Transport.TLS.Enabled || cfg.Transport.Mode == "quic" {
