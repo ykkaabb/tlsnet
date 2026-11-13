@@ -71,7 +71,13 @@ func connectMobileQUIC(parent context.Context, cfg *config.Config, keys *auth.Ke
 		cancel()
 		return nil, err
 	}
-	welcome, err := exchangeHelloQUIC(ctx, tunnel, mobileHello(cfg, 0, ""))
+	hello := mobileHello(cfg, 0, "")
+	if err := control.SignHello(&hello, keys.Session[:]); err != nil {
+		_ = tunnel.Close()
+		cancel()
+		return nil, err
+	}
+	welcome, err := exchangeHelloQUIC(ctx, tunnel, hello)
 	if err != nil {
 		_ = tunnel.Close()
 		cancel()
@@ -144,7 +150,12 @@ type mobileTLS struct {
 
 func connectMobileTLS(parent context.Context, cfg *config.Config, keys *auth.Keys) (packetSession, error) {
 	ctx, cancel := context.WithCancel(parent)
-	primary, welcome, err := dialMobileLane(ctx, cfg, keys, mobileHello(cfg, 0, ""))
+	primaryHello := mobileHello(cfg, 0, "")
+	if err := control.SignHello(&primaryHello, keys.Session[:]); err != nil {
+		cancel()
+		return nil, err
+	}
+	primary, welcome, err := dialMobileLane(ctx, cfg, keys, primaryHello)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -157,7 +168,11 @@ func connectMobileTLS(parent context.Context, cfg *config.Config, keys *auth.Key
 	}
 	connections := map[int]net.Conn{0: primary}
 	for lane := 1; lane < cfg.Transport.TLS.Lanes; lane++ {
-		conn, _, err := dialMobileLane(ctx, cfg, keys, mobileHello(cfg, lane, welcome.SessionID))
+		laneHello := mobileHello(cfg, lane, welcome.SessionID)
+		if err := control.SignHello(&laneHello, keys.Session[:]); err != nil {
+			continue
+		}
+		conn, _, err := dialMobileLane(ctx, cfg, keys, laneHello)
 		if err != nil {
 			continue
 		}

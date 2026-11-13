@@ -24,6 +24,21 @@ func TestStrictMessageDecode(t *testing.T) {
 	}
 }
 
+func TestHelloAuthenticationCoversControlFields(t *testing.T) {
+	key := []byte("test-session-key")
+	hello := Hello{Node: "home", Role: "gateway", Lane: 0, AdvertiseRoutes: []string{"192.168.3.0/24"}}
+	if err := SignHello(&hello, key); err != nil {
+		t.Fatal(err)
+	}
+	if !VerifyHello(hello, key) {
+		t.Fatal("signed hello did not verify")
+	}
+	hello.AdvertiseRoutes[0] = "0.0.0.0/0"
+	if VerifyHello(hello, key) {
+		t.Fatal("modified hello retained valid authentication")
+	}
+}
+
 func TestAllocatorReservationAndReuse(t *testing.T) {
 	pool := netip.MustParsePrefix("10.91.0.0/29")
 	relay := netip.MustParseAddr("10.91.0.1")

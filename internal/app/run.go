@@ -199,7 +199,8 @@ func (r *relay) handle(ctx context.Context, raw net.Conn, options tlsreality.Ser
 		return
 	}
 	var hello control.Hello
-	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil {
+	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil ||
+		!control.VerifyHello(hello, r.keys.Session[:]) {
 		return
 	}
 	var p *peer
@@ -436,7 +437,8 @@ func (r *relay) handleH3(ctx context.Context, tunnel *quicreality.H3Tunnel) {
 		return
 	}
 	var hello control.Hello
-	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil || hello.Lane != 0 {
+	if err := control.Decode(frame.Payload, &hello); err != nil || hello.Validate() != nil || hello.Lane != 0 ||
+		!control.VerifyHello(hello, r.keys.Session[:]) {
 		return
 	}
 	lane := &h3WriteLane{tunnel: tunnel}
@@ -560,6 +562,9 @@ func runNodeH3(ctx context.Context, cfg *config.Config, keys *auth.Keys, logger 
 	hello := control.Hello{
 		Node: cfg.Node.Name, Role: cfg.Node.Role, RequestedAddress: cfg.Overlay.Address,
 		AdvertiseRoutes: cfg.Overlay.AdvertiseRoutes, Lane: 0,
+	}
+	if err := control.SignHello(&hello, keys.Session[:]); err != nil {
+		return err
 	}
 	payload, err := control.Encode(hello)
 	if err != nil {
@@ -786,6 +791,10 @@ func dialLane(ctx context.Context, cfg *config.Config, keys *auth.Keys, hello co
 		return nil, control.Welcome{}, err
 	}
 	if err := conn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, control.Welcome{}, err
+	}
+	if err := control.SignHello(&hello, keys.Session[:]); err != nil {
 		_ = conn.Close()
 		return nil, control.Welcome{}, err
 	}

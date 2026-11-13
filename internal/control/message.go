@@ -2,6 +2,9 @@ package control
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +22,39 @@ type Hello struct {
 	AdvertiseRoutes  []string `json:"advertise_routes,omitempty"`
 	SessionID        string   `json:"session_id,omitempty"`
 	Lane             int      `json:"lane"`
+	Auth             string   `json:"auth,omitempty"`
+}
+
+func SignHello(hello *Hello, key []byte) error {
+	if hello == nil || len(key) == 0 {
+		return errors.New("hello and authentication key are required")
+	}
+	hello.Auth = ""
+	encoded, err := json.Marshal(hello)
+	if err != nil {
+		return err
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("tlsnet/control-hello/v1\x00"))
+	_, _ = mac.Write(encoded)
+	hello.Auth = base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return nil
+}
+
+func VerifyHello(hello Hello, key []byte) bool {
+	provided, err := base64.RawURLEncoding.DecodeString(hello.Auth)
+	if err != nil || len(provided) != sha256.Size || len(key) == 0 {
+		return false
+	}
+	hello.Auth = ""
+	encoded, err := json.Marshal(hello)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("tlsnet/control-hello/v1\x00"))
+	_, _ = mac.Write(encoded)
+	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 type Welcome struct {
